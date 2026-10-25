@@ -1,4 +1,13 @@
 const $ = id => document.getElementById(id);
+const staticPreview = location.hostname.endsWith('.github.io');
+const previewConfig = {
+  issuer: 'No asset used in this preview',
+  merchant: 'No destination in this preview',
+  items: [
+    { id: 'bottle', name: 'Reusable bottle (sample product)', kind: 'product', amount: '5.00' },
+    { id: 'antidote', name: 'ENZA-hosted sound healing session (demo ticket)', kind: 'event', amount: '10.00' }
+  ]
+};
 let order;
 let config;
 let wallet;
@@ -118,7 +127,9 @@ function itemCard(item) {
   heading.textContent = item.name;
   const description = document.createElement('p');
   description.textContent = item.kind === 'event'
-    ? 'A fictional ENZA-hosted sound-healing session. A demo ticket appears only after verified Testnet payment.'
+    ? staticPreview
+      ? 'A fictional ENZA-hosted sound-healing session. This hosted preview creates a sample ticket without a blockchain payment.'
+      : 'A fictional ENZA-hosted sound-healing session. A demo ticket appears only after verified Testnet payment.'
     : 'A sample reusable bottle for testing checkout. This is not live EnZa stock or a shippable order.';
   const bottom = document.createElement('div');
   bottom.className = 'sample-card-bottom';
@@ -126,7 +137,7 @@ function itemCard(item) {
   price.className = 'sample-price';
   price.textContent = `${item.amount} USDC`;
   const priceNote = document.createElement('small');
-  priceNote.textContent = 'TESTNET ONLY';
+  priceNote.textContent = staticPreview ? 'PREVIEW PRICE · NO PAYMENT' : 'TESTNET ONLY';
   price.append(priceNote);
   const button = document.createElement('button');
   button.type = 'button';
@@ -135,19 +146,28 @@ function itemCard(item) {
     if (processing) return;
     processing = true;
     try {
-      const currentWallet = await refreshWallet();
-      if (!currentWallet.ready) throw new Error('Prepare the Testnet demo wallet first.');
-      if (Number(currentWallet.usdc) < Number(item.amount)) throw new Error(`Fund the demo wallet with at least ${item.amount} Testnet USDC and refresh its balance first.`);
-      order = await api('/orders', { itemId: item.id });
+      if (staticPreview) {
+        const id = crypto.randomUUID();
+        order = { id, itemId: item.id, kind: item.kind, amount: item.amount,
+          memo: `preview-${id.slice(0,8)}`, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
+      } else {
+        const currentWallet = await refreshWallet();
+        if (!currentWallet.ready) throw new Error('Prepare the Testnet demo wallet first.');
+        if (Number(currentWallet.usdc) < Number(item.amount)) throw new Error(`Fund the demo wallet with at least ${item.amount} Testnet USDC and refresh its balance first.`);
+        order = await api('/orders', { itemId: item.id });
+      }
       submittedHash = undefined;
       $('pay').disabled = false;
       $('checkout').hidden = false;
-      $('details').textContent = `${item.name} · ${order.amount} USDC · expires ${new Date(order.expiresAt).toLocaleTimeString()}`;
+      $('details').textContent = `${item.name} · ${order.amount} USDC ${staticPreview ? 'preview price' : 'Testnet payment'} · expires ${new Date(order.expiresAt).toLocaleTimeString()}`;
       $('issuer').textContent = config.issuer || 'Not configured';
       $('merchant').textContent = config.merchant || 'Not configured';
-      $('payer').textContent = wallet.address;
+      $('payer').textContent = staticPreview ? 'No wallet used in this preview' : wallet.address;
       $('memo').textContent = order.memo;
-      status(`Pending order ${order.id}. Review the Testnet payment, then authorize it with the button below.`);
+      $('pay').textContent = staticPreview ? 'Complete simulated checkout ↗' : 'Authorize demo Testnet payment ↗';
+      status(staticPreview
+        ? `Preview order ${order.id}. This hosted version will not submit a transaction or mark a real order paid.`
+        : `Pending order ${order.id}. Review the Testnet payment, then authorize it with the button below.`);
       $('checkout').scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
       status(error.message);
@@ -162,12 +182,21 @@ function itemCard(item) {
 }
 
 try {
-  config = await api('/config');
+  config = staticPreview ? previewConfig : await api('/config');
   config.items.forEach(item => $('items').append(itemCard(item)));
-  await refreshWallet();
-  status(config.configured
-    ? 'Choose a sample to create a pending Testnet order.'
-    : 'The merchant address and verified Testnet USDC issuer must be configured before checkout.');
+  if (staticPreview) {
+    $('wallet-panel').hidden = true;
+    $('demo-intro').textContent = 'Choose a sample to preview the checkout flow. This hosted preview does not require a wallet and does not submit a payment.';
+    $('review-network').textContent = 'Static preview · no network';
+    $('review-asset').textContent = 'Illustrative USDC price';
+    $('checkout-note').textContent = 'This GitHub Pages preview does not use a wallet, submit a Testnet transaction, or fulfill a real order. The ticket shown is illustrative only.';
+    status('GitHub Pages preview: choose a sample to explore checkout. No Testnet payment or on-chain order confirmation occurs here.');
+  } else {
+    await refreshWallet();
+    status(config.configured
+      ? 'Choose a sample to create a pending Testnet order.'
+      : 'The merchant address and verified Testnet USDC issuer must be configured before checkout.');
+  }
   if (location.hash === '#event') $('event')?.scrollIntoView();
 } catch (error) {
   status(`Could not reach the local demo API: ${error.message}`);
@@ -175,6 +204,13 @@ try {
 
 $('pay').onclick = async () => {
   if (processing) return;
+  if (staticPreview) {
+    if (!order) return status('Select a sample first.');
+    const ticket = order.kind === 'event' ? ` · preview ticket PREVIEW-${order.id.slice(0,8)}` : '';
+    status(`Simulated checkout complete for sample ${order.id}${ticket}. No payment was sent, no on-chain order was confirmed, and this ticket is only a preview.`);
+    $('pay').disabled = true;
+    return;
+  }
   if (submittedHash) return confirmOrder(submittedHash);
   processing = true;
   try {

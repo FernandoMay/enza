@@ -12,6 +12,10 @@ Coding agents must read [AGENTS.md](AGENTS.md) and [thesis.md](thesis.md). This 
 - `demo.html` — sample product and experience checkout using the same local payment API.
 - `blueprint.html` — preserved strategy presentation from this repository's earlier homepage.
 
+## GitHub Pages preview
+
+The public site at [infoenzastore-cmd.github.io/enza](https://infoenzastore-cmd.github.io/enza/) serves the source HTML, CSS and JavaScript from `main`. Its checkout is an explicitly labeled **simulation**: it lets visitors select the sample product or experience and see a preview ticket, but sends no payment and claims no on-chain confirmation. GitHub Pages cannot run this repository's Node API. Use the local Testnet steps below for real network settlement.
+
 ## Local Testnet demo
 
 Use Node.js 22 or newer. The demo is local only; do not expose the API publicly.
