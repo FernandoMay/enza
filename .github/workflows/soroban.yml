@@ -22,7 +22,7 @@ jobs:
           targets: wasm32v1-none
       - name: Test contract
         working-directory: contracts/enza-checkout
-        run: cargo test --locked
+        run: cargo test
       - name: Install Stellar CLI
         uses: stellar/stellar-cli-action@v25
       - name: Build optimized WASM
