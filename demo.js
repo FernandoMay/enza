@@ -207,7 +207,7 @@ $('pay').onclick = async () => {
   if (staticPreview) {
     if (!order) return status('Select a sample first.');
     const ticket = order.kind === 'event' ? ` · preview ticket PREVIEW-${order.id.slice(0,8)}` : '';
-    status(`Simulated checkout complete for sample ${order.id}${ticket}. No payment was sent, no on-chain order was confirmed, and this ticket is only a preview.`);
+    status(`Simulated checkout complete for sample ${order.id}${ticket}. No payment was sent or confirmed on-chain.${order.kind === 'event' ? ' This ticket is only a preview.' : ''}`);
     $('pay').disabled = true;
     return;
   }
