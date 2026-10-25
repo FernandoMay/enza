@@ -8,6 +8,12 @@ ENZA will add a Stellar-based USDC payment and vendor-payout plugin to its exist
 
 ENZA is already a functioning Web2 conscious-lifestyle marketplace. It connects customers with curated products, independent makers and holistic-wellbeing solutions. The hackathon project does not replace the store or rebuild the entire marketplace. It adds a Web3 payment layer to the commerce that already exists.
 
+## Human users, coding agents
+
+This product is designed for humans. Its users are human customers buying from ENZA, human vendors receiving payouts and a human ENZA operator managing orders and authorising payouts. Codex and other AI agents are development tools used to build and test the product; they are not buyers, vendors, wallet owners or autonomous participants in the payment flow.
+
+The customer must review and sign their payment. The ENZA operator must explicitly authorise vendor payouts in the hackathon build. Agent-to-agent payments, autonomous spending, x402 and MPP are outside the product scope.
+
 The business problem is operational: international payments can create card fees, foreign-exchange spreads, settlement delays, payout fees and manual reconciliation. These costs make it harder for a small marketplace to serve global customers and pay local vendors efficiently.
 
 Our hypothesis is that Stellar USDC can improve this flow by providing a shared settlement asset, fast finality, low network fees and a verifiable transaction record. This is a hypothesis to test, not a promise of zero-cost or unrestricted global payments. The comparison must include the complete cost of acquiring USDC, network fees, conversion, custody, compliance and fiat off-ramping.
@@ -90,7 +96,7 @@ The MVP is a Stellar-native checkout and payout. Fiat on/off-ramps through ancho
 
 ## Mandatory agent bootstrap
 
-Any coding agent working in this repository must read this file before proposing architecture or writing payment code.
+In this section, **agent** means a coding assistant such as Codex. It does not mean an end user of ENZA. Any coding agent working in this repository must read this file before proposing architecture or writing payment code.
 
 Before implementing Stellar functionality, the agent must load the official [Stellar Dev Skill](https://github.com/stellar/stellar-dev-skill), maintained by Stellar. If it is not already available in the agent environment, install it using the method supported by that environment. For OpenAI Codex, the official documentation currently identifies `~/.codex/skills/` as the skills directory and provides this installation route:
 
