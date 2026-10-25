@@ -1,23 +1,36 @@
 # ENZA Movement implementation plan
 
-## Audit, 25 October 2026
+## Phase 1 audit — 25 October 2026
 
-This repository is a static strategy presentation (`index.html`, `README.md`, `thesis.md`). It has no package manifest, application backend, database, catalogue, cart, authentication, checkout, payment provider, order lifecycle, CI, or deployment configuration. `enza.in` is linked as an external existing store; its implementation and APIs are not present here. There is no ENZA-managed experience inventory or booking system. The intended product direction is ENZA arranging wellness and cultural experiences itself; the session in this demo is synthetic. The presentation is the only existing site feature to preserve.
+The repository's `main` commit `e41ae363` contains a static strategy page (`index.html`), a separate two-item Testnet sample (`demo.html`, `demo.js`), a Node/Horizon API (`server.js`, `payment.js`), a JSON order file under ignored `.data/`, and four payment-verification tests. Vite builds the two static pages. There is no production catalogue, shared cart, user authentication, inventory, shipping, vendor ledger, payout service, CI, or deployment configuration in this repository. The sample API creates one-item pending orders and checks Testnet settlement; it is not connected to the live store.
 
-Consequently, this repository cannot add a checkout *alongside the existing store's payment methods* or reuse its orders without access to that store's source/API. A distinct, clearly marked testnet demo is the safe vertical slice here. No live commerce or ticket integration should be claimed.
+The public `https://enza.in/` site is an existing EnZa store. Its page exposes `assets.aasaan.app` Next.js assets, collection, account and cart links, and a Cashfree browser SDK. This establishes an Aasaan-hosted storefront and a Cashfree client integration, but does not reveal its private database, product/order APIs, payment configuration, checkout lifecycle, or source code. Those features cannot be safely modified or reused from this repository. Axess.Zone APIs and authorization have not been verified. Preserve the live store and its existing payment choices by linking to it, without claiming an integration.
 
-## Files and dependencies
+The current repository's brand page is a presentation, not a customer website. Its content and links should be retained as an accessible blueprint while the repository root becomes a clear ENZA Movement entry point.
 
-- Preserve `index.html`; add a link to a separate ENZA Movement demo if implemented.
-- Add a small Node.js service and local demo page for sample product and event checkout, order persistence, Stellar payment intents, server verification, and demo fulfillment.
-- Add `@stellar/stellar-sdk` and `@stellar/freighter-api` with a committed lockfile; use Node.js 22 or later.
-- Add `.env.example`, `docs/STELLAR_INTEGRATION.md`, and `docs/HACKATHON_DEMO.md`.
-- Add tests for verification invariants, retries, duplicate hashes, and fulfillment idempotency.
+## Smallest site slice
 
-## Boundaries and risks
+1. Copy the current `index.html` to `blueprint.html` so the presentation remains available.
+2. Build a responsive `index.html` for the ENZA Movement umbrella, with distinct **Shop EnZa** and **Experience Antidote** paths, links to the actual EnZa store, and a visibly labelled sample Testnet checkout. Keep the live store's warm, editorial visual cues. Do not invent a live Antidote inventory, booking API, or Axess.Zone connection.
+3. Keep the separate `demo.html` and existing backend as the sample checkout. Link to it from the new site. Continue showing both sample product and sample ENZA-hosted sound-healing ticket using the same payment code.
+4. Update `README.md` and the demo script to distinguish the live store, new site, and Testnet sample. No additional dependency is needed.
 
-Testnet only. USDC code and issuer must be checked against a current authoritative source before configuration. Merchant and vendor public keys are configuration; private signing keys never enter the browser. A wallet must hold XLM for fees and USDC trustline. Demo catalogues and tickets are synthetic. Server storage needs durable, atomic writes or a database before a shared/public deployment. Merchant payout signing and a real transaction require a funded operator wallet and explicit operator authorization. External store integration depends on its architecture and access. Axess.Zone integration depends on a verified API and authorization.
+## Payment and data risks
 
-## MVP acceptance
+- Circle's current official Testnet USDC issuer must be checked before configuration. Testnet assets have no monetary value. A merchant account needs an authorized trustline, and a payer needs the same asset, sufficient test USDC and XLM for reserves and fees.
+- The local JSON order file is single-process demo storage. It has no customer identity, durable multi-process locks, live inventory, production fulfillment, or authenticated payout approval. Keep it local and Testnet only.
+- A transaction hash is not enough to pay an order. The server must continue checking success, Testnet, destination, exact code and issuer, amount, memo, expiry and hash reuse before issuing a demo ticket.
+- The current merchant Testnet address is a receive-only demonstration account: its temporary signing key was discarded after creating the trustline, so it cannot perform vendor payouts. A future payout requires a new managed signing account, verified vendor address and trustline, an auditable ledger and explicit operator authorization.
+- Integrating optional USDC into the live Aasaan checkout requires store administration/API access and an approved extension point. Existing Cashfree and other payment methods must remain enabled.
 
-A human can select a labelled sample product or event, create a pending order, connect Freighter on Testnet, review and sign an exact USDC payment, and see a server-verified confirmation or a clear pending/failure state. Server verification checks network, success, destination, asset issuer, amount, order memo, expiry, and unique hash. Repeated callbacks produce one confirmation and at most one demo ticket. Vendor allocation reconciles exactly. Existing presentation remains usable. Any capabilities not actually working must be documented as such.
+## MVP acceptance for this repository
+
+- ENZA Movement opens at the root with working Shop EnZa and Experience Antidote paths on desktop and mobile.
+- The live EnZa store remains reachable and unchanged; the former strategy page remains reachable as `blueprint.html`.
+- Sample Testnet product and experience checkout remain clearly labelled, with a shared payment path and no claim of production integration.
+- `npm ci`, `npm test`, and `npm run build` pass on Node 22+.
+- A real payment or ticket is claimed only after the disposable server wallet signs, the transaction succeeds and independent Testnet verification passes. This extension-free local demo does not demonstrate a production customer-controlled wallet flow. A successful local build alone does not satisfy this criterion.
+
+## Beyond this repository
+
+Obtain the live Aasaan store's supported checkout extension/API documentation and authorized access. Map its real products, customer account, cart, order, tax, shipping, inventory, and Cashfree state transitions before adding USDC beside existing methods. Verify Axess.Zone capabilities separately before using its ticket inventory or fulfillment. Design vendor allocations and payouts only after the payment and order reconciliation path is proven.
