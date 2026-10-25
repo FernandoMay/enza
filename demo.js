@@ -1,5 +1,6 @@
 const $ = id => document.getElementById(id);
-const staticPreview = location.hostname.endsWith('.github.io');
+// Netlify and GitHub Pages publish only the static preview. Real Testnet payments remain local-only.
+const staticPreview = location.hostname.endsWith('.github.io') || location.hostname.endsWith('.netlify.app');
 const previewConfig = {
   issuer: 'No asset used in this preview',
   merchant: 'No destination in this preview',
