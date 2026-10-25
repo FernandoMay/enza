@@ -2,6 +2,8 @@
 
 ENZA is an operating conscious-lifestyle marketplace evolving from Web2 commerce into a wallet-enabled Web3 platform. This repository contains the presentation site used to align the hackathon team around that transition.
 
+Agents and contributors must begin with [`thesis.md`](thesis.md). It defines the USDC payment flow, Stellar skill requirements, security boundaries and the hackathon definition of done.
+
 ## Open the site
 
 Open `index.html` directly or serve the repository root with any static web server. The current private presentation is also available at [enza-commerce-blueprint.info-enzastore.chatgpt.site](https://enza-commerce-blueprint.info-enzastore.chatgpt.site).
