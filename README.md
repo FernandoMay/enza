@@ -32,3 +32,9 @@ The first two sections explain ENZA's business and holistic-wellbeing purpose. T
 ## Current boundary
 
 This repository currently contains a strategy and presentation site. No live AI, payment, tax engine, wallet connection or vendor payout is implemented. Testnet assets have no real monetary value.
+
+## ENZA Movement Testnet demo
+
+The repository also contains a separate **sample** checkout for one wellness product and one ENZA-hosted sound healing experience. This is not connected to the live EnZa store. See [the implementation plan](docs/IMPLEMENTATION_PLAN.md), [Stellar setup](docs/STELLAR_INTEGRATION.md), and [demo script](docs/HACKATHON_DEMO.md).
+
+On Node.js 22+, run `npm ci`, then `npm start` in one terminal and `npm run dev` in another. Open `http://127.0.0.1:5173/demo.html`. Configure the public Testnet issuer and merchant address as described in the setup document before attempting a transaction. `npm test` exercises server verification rules without spending test assets.

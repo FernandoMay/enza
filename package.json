@@ -1,0 +1,21 @@
+{
+  "name": "enza-movement-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "dev": "vite --host 127.0.0.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@stellar/freighter-api": "^6.0.0",
+    "@stellar/stellar-sdk": "^16.0.0"
+  },
+  "devDependencies": {
+    "vite": "^8.3.5"
+  }
+}
