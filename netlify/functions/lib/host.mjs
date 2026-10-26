@@ -60,6 +60,33 @@ function checkoutContext(runtime) {
 
 const OPERATOR_REQUIRED = 'Configure the Testnet operator key (STELLAR_CHECKOUT_OPERATOR_SECRET) to create checkout orders';
 
+// Diagnostics helpers. They surface WHY a networked or bootstrap operation
+// failed without ever exposing secret material: only error classes/codes and
+// public configuration identities. Anything that remotely looks like a Stellar
+// key (base32 alphabet, 55 chars, typical key prefixes) is redacted.
+function netCauseCodes(error) {
+  const codes = [];
+  let err = error;
+  for (let depth = 0; err && depth < 5; depth += 1, err = err.cause) {
+    if (err.code) codes.push(String(err.code));
+  }
+  return codes;
+}
+
+function sanitizeDiagnostics(text) {
+  return String(text ?? '').replace(/[SCGXM][A-Z2-7]{55}/g, '[redacted]').slice(0, 300);
+}
+
+function describeNetworkedError(error) {
+  const base = String(error?.message || error);
+  const causes = netCauseCodes(error);
+  const networkCodes = /^(ENOTFOUND|ECONNREFUSED|ECONNRESET|ECONNABORTED|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|UND_ERR_|ABORT_ERR|CERT_|ERR_TLS)/;
+  if (causes.some(code => networkCodes.test(code))) {
+    return `${base} — outbound network failure to the Stellar Testnet RPC (cause chain: ${causes.join(' > ')}). Check this deployment's network egress; the configured Testnet endpoint must be reachable from the serverless runtime.`;
+  }
+  return sanitizeDiagnostics(base);
+}
+
 function sameOriginGuard(method, headers) {
   if (method !== 'POST') return;
   const origin = headers?.origin;
@@ -99,16 +126,19 @@ export async function handleApiRequest({ url, method, headers = {}, body: rawBod
   try {
     sameOriginGuard(method, headers);
 
-    if (method === 'GET' && (path === '/api/config' || path === '/api/health')) {
+    if (method === 'GET' && path === '/api/config') {
       let paymentConfig = null;
       let operatorConfigured = false;
+      let bootstrapError = null;
       try {
         const rt = needRuntime();
         paymentConfig = rt.config;
         operatorConfigured = Boolean(rt.operatorKeypair);
-      } catch {
-        // No payment configuration installed on this deployment: report the
-        // gap honestly instead of failing the probe outright.
+      } catch (error) {
+        // Report the gap honestly instead of failing the probe outright, and
+        // include the (sanitized) reason so the deployment's configuration
+        // problem is actionable without shell or dashboard access.
+        bootstrapError = sanitizeDiagnostics(error?.message || error);
       }
       return send(200, {
         network: 'Testnet', networkPassphrase: (paymentConfig?.passphrase) ?? null,
@@ -117,11 +147,41 @@ export async function handleApiRequest({ url, method, headers = {}, body: rawBod
         merchant: paymentConfig?.merchant ?? null,
         checkout: paymentConfig ? { contractId: paymentConfig.contractId, rpcUrl: paymentConfig.rpcUrl } : null,
         operatorConfigured,
+        // The configured operator variable is a server-side secret: only its
+        // (first) environment NAME is reported, never a value, so an operator
+        // can spot a typo or a mis-scoped variable from the page probe.
+        operatorEnvKeys: Object.keys(env).filter(key => /STELLAR/i.test(key) && /OPERATOR/i.test(key)).slice(0, 5),
+        bootstrapError,
         items: Object.entries(CATALOG).map(([id, v]) => ({ id, name: v.name, kind: v.kind, amount: (Number(v.units) / 1e7).toFixed(2) })),
         capabilities: { demoWallet: false },
         hostedMode: 'serverless-stateless',
         commit: env.COMMIT_REF ?? null
       });
+    }
+
+    if (method === 'GET' && path === '/api/health') {
+      // Real, bounded RPC reachability probe for the deployed runtime. This is
+      // the safe way to obtain the concrete network failure that generic
+      // "fetch failed" errors hide, without shell/log access.
+      let rpcProbe = { url: null, reachable: false, error: null };
+      try { rpcProbe.url = needRuntime().config.rpcUrl; } catch {}
+      if (rpcProbe.url) {
+        try {
+          const res = await fetch(rpcProbe.url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getNetwork' }),
+            signal: AbortSignal.timeout(5000)
+          });
+          rpcProbe.reachable = res.ok;
+          if (!res.ok) rpcProbe.error = `RPC answered HTTP ${res.status}`;
+        } catch (error) { rpcProbe.error = describeNetworkedError(error); }
+      } else {
+        rpcProbe.error = 'checkout configuration failed to bootstrap; see /api/config bootstrapError';
+      }
+      let operatorConfigured = false;
+      try { operatorConfigured = Boolean(needRuntime().operatorKeypair); } catch {}
+      return send(200, { status: 'ok-check', network: 'Testnet', rpc: rpcProbe, operatorConfigured, commit: env.COMMIT_REF ?? null });
     }
 
     if (method === 'GET' && path === '/api/checkout') {
@@ -228,9 +288,9 @@ export async function handleApiRequest({ url, method, headers = {}, body: rawBod
     return notFound();
   } catch (error) {
     if (error instanceof RouteError) return send(error.status, { error: error.message });
-    return send(400, { error: String(error?.message || error).slice(0, 300) });
+    return send(400, { error: describeNetworkedError(error) });
   }
 }
 
 export const ROUTE_DEPOSIT_WINDOW_MS = DEPOSIT_WINDOW_MS;
-export { UUID_PATTERN };
+export { UUID_PATTERN, describeNetworkedError, sanitizeDiagnostics };
