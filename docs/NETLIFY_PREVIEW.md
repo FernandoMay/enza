@@ -99,14 +99,15 @@ Variable | Kind | Where from
   UI detects *hosting capabilities* by probing `/api/config` rather than by
   hostname.
 
-## Remaining blockers (honest state)
+## Some real environment considerations (current blockers)
 
 | Blocker | Who unblocks it |
 |---|---|
+| The enzamx site has built deploy-preview-1 for PR #1 but, as verified 2026-10-26, has **not** created a deploy preview for PR #2 (`deploy-preview-2--enzamx.netlify.app` returns Netlify's "site not found" page even after the branch was pushed and PR #2 exists). A site owner should confirm "Deploy previews" are enabled for the enzamx site or trigger the build from the Netlify UI (e.g. open the PR in the Netlify app or comment `/netlify deploy` on PR #2 as an authorized member). | The authorized site owner. |
 | Netlify environment variables must be configured by the account/site owner (any workspace access is restricted) | The authorized operator. |
 | Customer-signed (Freighter) walkthrough on the hosted preview cannot be performed by the agent | The human demo operator. |
 | Durable shared storage, cross-instance rate limiting and pooled metrics (if ever required beyond the pure post-pay flows) require runtime accounts (e.g. hosted KV): not available in the environment and not authorized | Maintainers. |
-| Hosted CI stays blocked/unverified while the GitHub account has a billing lock | The account owner. |
+| Hosted CI stays blocked/unverified while the GitHub account has a billing lock (re-checked 2026-10-26 on the pushed head: `contract` job completed with zero executed steps) | The account owner. |
 
 ## Reference
 
