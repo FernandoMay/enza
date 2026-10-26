@@ -20,6 +20,10 @@ const previewConfig = {
   ]
 };
 const TESTNET = 'TESTNET';
+// True for the .netlify.app host itself, independent of whether the hosted
+// functions are configured; used only to point configuration-error messages
+// at the right audience (hosted deployments vs the local demo).
+const hostedHostName = location.hostname.endsWith('.netlify.app');
 // Public catalog facts for the labelled live-store showcase card. Facts as
 // served on the public product page; re-verified 2026-10-26. Text and link
 // only, no store imagery (copyright stays with the store).
@@ -244,7 +248,9 @@ function itemCard(item) {
           memo: `preview-${id.slice(0,8)}`, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
       } else {
         if (freighter) lastRail = 'wallet';
-        else {
+        else if (config.capabilities?.demoWallet === false) {
+          throw new Error('This hosted deployment requires your own wallet: install the Stellar Testnet Freighter extension, connect it, and choose a sample again.');
+        } else {
           const currentWallet = await refreshWallet();
           if (!currentWallet.ready) throw new Error('Connect your Stellar wallet, or prepare the disposable demo wallet, before paying.');
           if (Number(currentWallet.usdc) < Number(item.amount)) throw new Error(`Fund the demo wallet with at least ${item.amount} Testnet USDC and refresh its balance, or connect Freighter.`);
@@ -342,7 +348,9 @@ try {
     $('review-network').textContent = 'Static preview · no network';
     $('review-asset').textContent = 'Illustrative USDC price';
     $('checkout-note').textContent = 'This hosted static preview does not use a wallet, submit a Testnet transaction, or fulfill a real order. The ticket shown is illustrative only.';
-    status('Hosted static preview: choose a sample to explore checkout. No Testnet payment or on-chain order confirmation occurs here.');
+    status(hostedConfig && hostedHostName
+      ? 'Hosted preview: the deployment is reachable, but Testnet checkout variables are not configured yet, so payments are disabled. The site operator must complete docs/NETLIFY_PREVIEW.md setup.'
+      : 'Hosted static preview: choose a sample to explore checkout. No Testnet payment or on-chain order confirmation occurs here.');
   } else {
     $('freighter-connect').hidden = false;
     try {
@@ -362,9 +370,11 @@ try {
       $('freighter-status').textContent = 'Connect your wallet to enable the real Testnet flow on this hosted deployment.';
     }
     if (config.configured && config.checkout) {
-      status(config.operatorConfigured
-        ? 'Connect your wallet or prepare the demo wallet, then choose a sample.'
-        : 'The server operator key must be configured (STELLAR_CHECKOUT_OPERATOR_SECRET) before creating orders.');
+      status(config.capabilities?.demoWallet === false
+        ? 'Connect your Testnet wallet (Freighter), then choose a sample.'
+        : config.operatorConfigured
+          ? 'Connect your wallet or prepare the demo wallet, then choose a sample.'
+          : 'The server operator key must be configured (STELLAR_CHECKOUT_OPERATOR_SECRET) before creating orders.');
     } else {
       status('The checkout contract, merchant address and verified Testnet USDC issuer must be configured before checkout.');
     }

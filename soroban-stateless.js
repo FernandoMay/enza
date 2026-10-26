@@ -67,6 +67,17 @@ export function publicOrder(order, { explorerBase = 'https://stellar.expert/expl
 
 const isoFromSeconds = seconds => new Date(Number(seconds) * 1000).toISOString();
 
+// Extracts the payer identity from a wallet-signed envelope, or null when the
+// envelope is malformed. The browser never gets to TELL the server who paid:
+// the payer is the envelope's source, and the transaction's own signature
+// decides whether that claim is true.
+export function payerFromSignedEnvelope(signedXdr) {
+  try {
+    const tx = TransactionBuilder.fromXDR(String(signedXdr ?? ''), TESTNET_PASSPHRASE);
+    return tx.source || null;
+  } catch { return null; }
+}
+
 // Rebuilds the order from an untrusted browser reference and the authoritative
 // on-chain record. Display hints (item, price, timestamps) are only accepted
 // when they agree with the catalog and the chain; disagreement fails closed.
