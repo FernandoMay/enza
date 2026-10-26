@@ -1,8 +1,14 @@
 import { isConnected as freighterIsConnected, getAddress as freighterGetAddress, requestAccess as freighterRequestAccess, signTransaction as freighterSign, getNetwork as freighterNetwork } from '@stellar/freighter-api';
 
 const $ = id => document.getElementById(id);
-// Netlify and GitHub Pages publish only the static preview. Real Testnet payments remain local-only.
-const staticPreview = location.hostname.endsWith('.github.io') || location.hostname.endsWith('.netlify.app');
+// Netlify and GitHub Pages publish a static preview first. Live checkout on a
+// hosted deployment (serverless functions) activates only when the probed API
+// proves full Testnet configuration; GitHub Pages stays a labelled preview.
+// Hosted capability detection: decide live vs static from the probed API
+// configuration, not from hostname alone. A serverless deployment reports
+// configured + operatorConfigured and switches out of preview mode; a static
+// host (GitHub Pages / Netlify without functions) falls back to the preview.
+let staticPreview = location.hostname.endsWith('.github.io') || location.hostname.endsWith('.netlify.app');
 const previewConfig = {
   issuer: 'No asset used in this preview',
   merchant: 'No destination in this preview',
@@ -15,14 +21,14 @@ const previewConfig = {
 };
 const TESTNET = 'TESTNET';
 // Public catalog facts for the labelled live-store showcase card. Facts as
-// served on the public product page on 2026-10-25; text and link only, no
-// store imagery (copyright stays with the store).
+// served on the public product page; re-verified 2026-10-26. Text and link
+// only, no store imagery (copyright stays with the store).
 const LIVE_SHOWCASE = Object.freeze({
   url: 'https://enza.in/products/organic-plain-khapli-wheat-khakhra',
   title: 'Khapli Wheat Khakhra Organic Plain',
   brand: 'Satjeevan Organics',
   listPrice: '₹190 (public list price)',
-  note: 'public catalog facts as served by enza.in on 2026-10-25'
+  note: 'public catalog facts as served by enza.in; re-verified 2026-10-26'
 });
 let order;
 let config;
@@ -156,7 +162,11 @@ async function confirmOrder(hash) {
   processing = true;
   try {
     status('Verifying settlement on-chain and on the Testnet ledger…');
-    const paid = await api(`/orders/${order.id}/confirm`, { hash });
+    // The reference travels along so the server can re-derive display facts
+    // it cannot store; every payment fact is re-verified from the chain.
+    const paid = await api(`/orders/${order.id}/confirm`, { hash, ref: {
+      itemId: order.itemId, amount: order.amount, createdAt: order.createdAt, customer: order.customer
+    } });
     status(`Payment verified. Order ${paid.id} is paid${paid.ticket ? ' · demo ticket ' + paid.ticket : ''}. Paid at ${paid.paidAt} · tx ${paid.hash} · contract order ${shorten(paid.soroban.onChainId)}`, paid.explorer);
     $('pay').disabled = true;
     localStorage.setItem('enza-last-order', JSON.stringify({ id: paid.id, status: 'paid', hash }));
@@ -242,7 +252,14 @@ function itemCard(item) {
         }
         order = await api('/orders', { itemId: item.id });
         submittedHash = undefined;
-        localStorage.setItem('enza-last-order', JSON.stringify({ id: order.id, status: 'pending' }));
+        if (order.status === 'staging') {
+          status('On-chain order staged. Waiting for the Testnet ledger confirmation…');
+          order = await waitForOrder(order.id) ?? order;
+        }
+        localStorage.setItem('enza-last-order', JSON.stringify({
+          id: order.id, status: order.status, itemId: order.itemId, kind: order.kind,
+          amount: order.amount, createdAt: order.createdAt, customer: order.customer
+        }));
       }
       showReview(order, item);
       status(staticPreview
@@ -302,7 +319,21 @@ async function payWithDemoWallet() {
 }
 
 try {
-  config = staticPreview ? previewConfig : await api('/config');
+  // Probe the API once: when it answers fully configured, this host runs the
+  // real checkout (localhost server or hosted serverless functions). A static
+  // host keeps the labelled paymentless preview. Configuration is never
+  // faked: a half-configured hosted deployment stays in preview mode (fail
+  // closed) instead of pretending to settle payments.
+  let hostedConfig = null;
+  try { hostedConfig = await api('/config'); } catch (probeError) {
+    if (!staticPreview) throw probeError;
+  }
+  if (hostedConfig?.configured && hostedConfig?.operatorConfigured && hostedConfig?.checkout) {
+    config = hostedConfig;
+    staticPreview = false;
+  } else {
+    config = staticPreview ? previewConfig : hostedConfig;
+  }
   config.items.forEach(item => $('items').append(itemCard(item)));
   if (staticPreview) {
     $('freighter-panel').hidden = true;
@@ -319,7 +350,17 @@ try {
       $('freighter-status').hidden = false;
       $('freighter-status').textContent = `Verified Testnet checkout contract: ${shorten(checkout.contractId)} (USDC SAC settled on Testnet)`;
     } catch {}
-    await refreshWallet();
+    // The disposable demo wallet is a local-server capability; hosted
+    // serverless deployments state this explicitly and hide its panel.
+    if (config.capabilities?.demoWallet === false) {
+      $('wallet-panel').hidden = true;
+      $('demo-intro').textContent = 'Connect your Stellar Testnet wallet (Freighter), then select the sample product below. The disposable demo wallet is only available when running the local server demo.';
+    }
+    if (!freighter && config.capabilities?.demoWallet !== false) await refreshWallet();
+    if (config.capabilities?.demoWallet === false && !freighter) {
+      $('freighter-status').hidden = false;
+      $('freighter-status').textContent = 'Connect your wallet to enable the real Testnet flow on this hosted deployment.';
+    }
     if (config.configured && config.checkout) {
       status(config.operatorConfigured
         ? 'Connect your wallet or prepare the demo wallet, then choose a sample.'
@@ -334,6 +375,20 @@ try {
   status(`Could not reach the local demo API: ${error.message}`);
 }
 
+// Polls a staged order until the ledger confirms the create_order write.
+// The hosted deployment answers 'staging' when creation reached the chain
+// but did not settle within the serverless invocation budget.
+async function waitForOrder(id, attempts = 4) {
+  for (let tries = 0; tries < attempts; tries++) {
+    await new Promise(r => setTimeout(r, 2500));
+    try {
+      const latest = await api(`/orders/${id}`);
+      if (latest?.status === 'pending' || latest?.status === 'paid') return latest;
+    } catch {}
+  }
+  return null;
+}
+
 async function resumeLastOrder() {
   let saved;
   try { saved = JSON.parse(localStorage.getItem('enza-last-order') || 'null'); } catch { return; }
@@ -341,7 +396,17 @@ async function resumeLastOrder() {
   let latest;
   try { latest = await api(`/orders/${saved.id}`); } catch { localStorage.removeItem('enza-last-order'); return; }
   if (!latest || latest.status !== 'pending') return;
-  order = latest;
+  // Reconcile the chain-backed payload with the browser-held reference:
+  // on-chain values are authoritative, the reference only restores display
+  // hints (item identity, creation time) that the ledger does not store.
+  order = {
+    ...latest,
+    itemId: saved.itemId ?? latest.itemId,
+    kind: saved.kind ?? latest.kind,
+    amount: latest.amount ?? saved.amount,
+    createdAt: saved.createdAt ?? latest.createdAt,
+    customer: saved.customer ?? latest.customer
+  };
   submittedHash = latest.hash || undefined;
   const item = config.items.find(candidate => candidate.id === latest.itemId);
   if (item) showReview(order, item);

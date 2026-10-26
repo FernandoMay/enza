@@ -19,7 +19,7 @@ export const LIVE_SHOWCASE = Object.freeze({
   title: 'Khapli Wheat Khakhra Organic Plain',
   brand: 'Satjeevan Organics',
   listPrice: '₹190 (public list price)',
-  note: 'Public catalog facts as served by the live storefront page on 2026-10-25.'
+  note: 'Public catalog facts as served by the live storefront page; re-verified 2026-10-26.'
 });
 export const unitsToAmount = units => `${units / 10000000n}.${(units % 10000000n).toString().padStart(7,'0')}`;
 export function amountToUnits(value) {

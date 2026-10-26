@@ -186,21 +186,27 @@ export async function createCheckoutService(config, {rpcServer = new rpc.Server(
       return {xdr: tx.built.toXDR(), networkPassphrase: TESTNET_PASSPHRASE};
     },
     // Submits a wallet-signed payment after validating it against the intent.
-    async submitSignedPayment({order, customerAddress, signedXdr, usedHashes}) {
+    // timeoutMs lets serverless hosts bound the confirmation poll inside their
+    // execution budget; the local server keeps the original 60s behavior.
+    async submitSignedPayment({order, customerAddress, signedXdr, usedHashes, timeoutMs = 60_000}) {
       const tx = TransactionBuilder.fromXDR(signedXdr, TESTNET_PASSPHRASE); // rejects other networks
-      if (usedHashes.has(tx.hash().toString('hex'))) throw new Error('Transaction already used');
+      // tx.hash() returns a raw Uint8Array on this SDK version; normalise it
+      // to the hex form used everywhere else (RPC hashes, receipts, explorer
+      // links) so duplicate-submission checks actually compare like with like.
+      const txHash = Buffer.from(tx.hash()).toString('hex');
+      if (usedHashes.has(txHash)) throw new Error('Transaction already used');
       validateSignedCheckoutTx(tx, {order, customerAddress, contractId: config.contractId, onChainId: order.soroban.onChainId});
       const response = await rpcServer.sendTransaction(tx);
       if (response.status === 'ERROR') throw new Error(`Submission failed: ${response.errorResult}`);
       const hash = response.hash;
-      const deadline = Date.now() + 60_000;
+      const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         const result = await rpcServer.getTransaction(hash);
         if (result.status === 'SUCCESS') return {hash, txStatus: result.status};
         if (result.status === 'FAILED') return {hash, txStatus: result.status};
         await new Promise(r => setTimeout(r, 1000));
       }
-      throw new Error('Transaction still pending after 60s');
+      throw new Error(`Transaction still pending after ${Math.round(timeoutMs/1000)}s. Confirmation is idempotent — re-run it from the transaction receipt.`);
     },
     async getTransaction(hash) {
       return rpcServer.getTransaction(hash);
