@@ -46,6 +46,22 @@ Open `http://127.0.0.1:3000/demo.html`.
 
 No automatic vendor payouts or refunds are implemented: payouts (`settlement.js` allocation engine) remain a deterministic preview and would need a separately reviewed authorisation and accounting design before execution.
 
+### Manual Freighter walkthrough (operator checklist)
+
+Environment note: this project's automated environment has no browser extension host, so the wallet flow was verified with a stand-in signer driving the identical server↔wallet protocol, plus live on-chain settlements. To execute the real-extension walkthrough, run the checklist below on a machine where the Freighter extension is installed and set to Testnet:
+
+1. `npm start` (or `node server.js`) with `.env` configured; confirm the startup line prints the verified contract and `Testnet`.
+2. Open `http://localhost:3000/demo.html`; confirm the *Testnet only — test USDC has no monetary value* banner.
+3. Click **Connect Freighter**; approve the popup; confirm the shown address matches the wallet's account and that Freighter reports **Stellar Testnet** (if it offers a network switch, accept it; the page refuses Pubnet).
+4. Fund the wallet address if needed (Circle Testnet faucet at `https://faucet.circle.com/` — chosen network: Stellar Testnet — or transfer test USDC from any holder).
+5. Select the **sample product** card (the primary path). Check the review panel shows: item name, 5.00 USDC, Stellar Testnet, the verified USDC SAC token (`CBIELTK6…QDAMA`), merchant destination (`GDTOM5L…EOX4`), your payer address, expiry, and the on-chain order id.
+6. Press **Sign payment with my wallet**; in the Freighter popup confirm the decoded operation is exactly one `pay_order` invocation of the verified contract (`CA4BAJT…YDRP`) with your address as payer and no other operations, then approve.
+7. The page submits, verifies `getTransaction` success and on-chain `get_order` state, and only then displays *Paid* with the transaction hash, a Stellar Explorer Testnet link, and the order correlation id.
+8. Reload the page: the paid status persists. Re-clicking pay/confirm must never double-charge (contract rejects a second `pay_order` and the server replays idempotently).
+9. Record the order id and transaction hash in `contracts/deployments/testnet-2026-10-26.md`.
+
+If any popup differs from the pre-sign review panel, stop and retry: never sign a transaction you cannot match to the review facts.
+
 ## Local order storage (single process, demo only)
 
 Orders live in `.data/orders.json` next to `server.js` (created on demand; a git-ignored directory). The file is written atomically (write-then-rename) and is quarantined at startup when unreadable — a corrupt store never blocks the server: it logs the quarantine, starts with an empty in-memory store, and on-chain Testnet state remains authoritative for anything already settled. This is single-process demo storage, NOT a multi-instance backend: no two server processes may share a data directory, and horizontal scaling is explicitly out of scope. Tests never touch your real demo store — they run against their own throwaway directory (`ENZA_DATA_DIR`, documented in `.env.example`).
