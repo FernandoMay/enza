@@ -1,30 +1,44 @@
+import { isConnected as freighterIsConnected, getAddress as freighterGetAddress, requestAccess as freighterRequestAccess, signTransaction as freighterSign, getNetwork as freighterNetwork } from '@stellar/freighter-api';
+
 const $ = id => document.getElementById(id);
 // Netlify and GitHub Pages publish only the static preview. Real Testnet payments remain local-only.
 const staticPreview = location.hostname.endsWith('.github.io') || location.hostname.endsWith('.netlify.app');
 const previewConfig = {
   issuer: 'No asset used in this preview',
   merchant: 'No destination in this preview',
+  wallet: 'No wallet used in this preview',
   items: [
     { id: 'bottle', name: 'Reusable bottle (sample product)', kind: 'product', amount: '5.00' },
     { id: 'antidote', name: 'ENZA-hosted sound healing session (demo ticket)', kind: 'event', amount: '10.00' }
   ]
 };
+const TESTNET = 'TESTNET';
 let order;
 let config;
 let wallet;
 let submittedHash;
 let processing = false;
+let freighter = null; // { address }
+let lastRail; // 'wallet' | 'demo'
 
 async function api(path, body) {
   const response = await fetch('/api' + path, {
-    method: body ? 'POST' : 'GET',
+    method: body !== undefined ? 'POST' : 'GET',
     headers: { 'content-type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined
+    body: body !== undefined ? JSON.stringify(body) : undefined
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Request failed');
   return data;
 }
+
+const withTimeout = (promise, ms, message) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error(message)), ms);
+  promise.then(value => { clearTimeout(timer); resolve(value); },
+    error => { clearTimeout(timer); reject(error); });
+});
+
+const shorten = hex => hex ? `${hex.slice(0, 8)}…${hex.slice(-8)}` : '—';
 
 function status(message, explorer) {
   const target = $('status');
@@ -38,7 +52,7 @@ function status(message, explorer) {
     link.textContent = 'View Testnet transaction ↗';
     target.append(link);
   }
-  document.getElementById('retry-confirm')?.remove();
+  $('retry-confirm')?.remove();
 }
 
 function offerConfirmationRetry(hash) {
@@ -52,12 +66,15 @@ function offerConfirmationRetry(hash) {
 
 function showWallet(data) {
   wallet = data;
-  $('wallet-setup').hidden = data.ready;
-  $('wallet-refresh').hidden = !data.ready;
-  $('faucet-link').hidden = !data.ready;
-  $('wallet-address').hidden = !data.ready;
-  $('wallet-balances').hidden = !data.ready;
-  if (data.ready) {
+  const demoWalletUsed = !freighter;
+  $('wallet-setup').hidden = data.ready || !demoWalletUsed;
+  $('wallet-refresh').hidden = !data.ready || !demoWalletUsed;
+  $('faucet-link').hidden = !data.ready || !demoWalletUsed;
+  $('wallet-address').hidden = !data.ready || !demoWalletUsed;
+  $('wallet-balances').hidden = !data.ready || !demoWalletUsed;
+  if (freighter) {
+    $('wallet-status').textContent = 'Testnet wallet connected via Freighter. The disposable demo wallet below is optional.';
+  } else if (data.ready) {
     $('wallet-address').textContent = `Demo wallet public address: ${data.address}`;
     $('wallet-balances').textContent = `Balance: ${data.usdc} Testnet USDC · ${data.xlm} Testnet XLM`;
     $('wallet-status').textContent = Number(data.usdc) >= 15
@@ -72,6 +89,35 @@ async function refreshWallet() {
   showWallet(await api('/demo-wallet'));
   return wallet;
 }
+
+async function connectFreighter() {
+  if (processing) return;
+  processing = true;
+  try {
+    const { isConnected: installed, error } = await withTimeout(freighterIsConnected(), 4000, 'Freighter did not respond. Install the extension and reload.');
+    if (error || !installed) throw new Error('Freighter not installed. Use the disposable demo wallet below, or install the wallet and reload.');
+    const { address, error: accessError } = await withTimeout(freighterRequestAccess(), 60000, 'Wallet approval timed out or was rejected.');
+    if (accessError) throw new Error(accessError.message || 'Wallet request rejected.');
+    if (!address) throw new Error('No address was granted by the wallet.');
+    const { network, error: networkError } = await withTimeout(freighterNetwork(), 4000, 'Freighter did not report its network.');
+    if (networkError) throw new Error(networkError.message || 'Wallet network check failed.');
+    if (network !== TESTNET && !network.includes('Test SDF Network')) throw new Error(`Your wallet is on ${network}. Switch Freighter to Testnet and reconnect.`);
+    freighter = { address };
+    $('freighter-connect').hidden = true;
+    $('freighter-status').hidden = false;
+    $('freighter-status').textContent = `Connected Testnet wallet: ${address} — your wallet signs each payment; ENZA never receives your secret key.`;
+    status('Testnet wallet connected. Choose a sample to start a 15-minute pending order.');
+    await refreshWallet();
+  } catch (error) {
+    freighter = null;
+    $('freighter-status').hidden = false;
+    $('freighter-status').textContent = `Wallet not available: ${error.message} Use the disposable demo wallet below.`;
+  } finally {
+    processing = false;
+  }
+}
+
+$('freighter-connect').onclick = connectFreighter;
 
 $('wallet-setup').onclick = async () => {
   if (processing) return;
@@ -98,16 +144,30 @@ async function confirmOrder(hash) {
   if (processing) return;
   processing = true;
   try {
-    status('Checking Testnet ledger confirmation…');
+    status('Verifying settlement on-chain and on the Testnet ledger…');
     const paid = await api(`/orders/${order.id}/confirm`, { hash });
-    status(`Confirmed order ${paid.id}${paid.ticket ? ' · demo ticket ' + paid.ticket : ''}`, paid.explorer);
+    status(`Payment verified. Order ${paid.id} is paid${paid.ticket ? ' · demo ticket ' + paid.ticket : ''}. ${paid.paidAt} · contract order ${shorten(paid.soroban.onChainId)}`, paid.explorer);
     $('pay').disabled = true;
+    localStorage.setItem('enza-last-order', JSON.stringify({ id: paid.id, status: 'paid', hash }));
   } catch (error) {
-    status(`${error.message}\nTransaction hash: ${hash}\nConfirmation can be retried without paying again.`, `https://stellar.expert/explorer/testnet/tx/${hash}`);
+    status(`${error.message}\nTransaction hash: ${hash}\nConfirmation is idempotent and can be retried without paying again.`, `https://stellar.expert/explorer/testnet/tx/${hash}`);
     offerConfirmationRetry(hash);
   } finally {
     processing = false;
   }
+}
+
+function showReview(order, item) {
+  $('pay').disabled = order.status === 'paid' || false;
+  $('checkout').hidden = false;
+  $('details').textContent = `${item.name} · ${order.amount} USDC ${staticPreview ? 'preview price' : 'Testnet payment'} · expires ${new Date(order.expiresAt).toLocaleTimeString()}`;
+  $('review-network').textContent = staticPreview ? 'Static preview · no network' : 'Stellar Testnet · Soroban';
+  $('review-asset').textContent = staticPreview ? 'Illustrative USDC price' : 'Testnet USDC settled by the checkout contract';
+  $('issuer').textContent = staticPreview ? config.issuer : (order.soroban?.token ? 'Verified USDC SAC ' + shorten(order.soroban.token) : (config.issuer || 'Not configured'));
+  $('merchant').textContent = staticPreview ? config.merchant : (order.soroban?.merchant ? shorten(order.soroban.merchant) : 'Not configured');
+  $('payer').textContent = staticPreview ? config.wallet : (lastRail === 'wallet' ? freighter?.address : wallet?.address) || 'Not selected';
+  $('memo').textContent = staticPreview ? (order.memo || '—') : (order.soroban?.onChainId ? shorten(order.soroban.onChainId) + ' (on-chain bytes32 order id)' : '—');
+  $('pay').textContent = staticPreview ? 'Complete simulated checkout ↗' : (lastRail === 'wallet' ? 'Sign payment with my wallet ↗' : 'Authorize demo Testnet payment ↗');
 }
 
 function itemCard(item) {
@@ -130,7 +190,7 @@ function itemCard(item) {
   description.textContent = item.kind === 'event'
     ? staticPreview
       ? 'A fictional ENZA-hosted sound-healing session. This hosted preview creates a sample ticket without a blockchain payment.'
-      : 'A fictional ENZA-hosted sound-healing session. A demo ticket appears only after verified Testnet payment.'
+      : 'A fictional ENZA-hosted sound-healing session. A demo ticket appears only after verified Testnet settlement on the Soroban checkout contract.'
     : 'A sample reusable bottle for testing checkout. This is not live EnZa stock or a shippable order.';
   const bottom = document.createElement('div');
   bottom.className = 'sample-card-bottom';
@@ -152,23 +212,21 @@ function itemCard(item) {
         order = { id, itemId: item.id, kind: item.kind, amount: item.amount,
           memo: `preview-${id.slice(0,8)}`, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
       } else {
-        const currentWallet = await refreshWallet();
-        if (!currentWallet.ready) throw new Error('Prepare the Testnet demo wallet first.');
-        if (Number(currentWallet.usdc) < Number(item.amount)) throw new Error(`Fund the demo wallet with at least ${item.amount} Testnet USDC and refresh its balance first.`);
+        if (freighter) lastRail = 'wallet';
+        else {
+          const currentWallet = await refreshWallet();
+          if (!currentWallet.ready) throw new Error('Connect your Stellar wallet, or prepare the disposable demo wallet, before paying.');
+          if (Number(currentWallet.usdc) < Number(item.amount)) throw new Error(`Fund the demo wallet with at least ${item.amount} Testnet USDC and refresh its balance, or connect Freighter.`);
+          lastRail = 'demo';
+        }
         order = await api('/orders', { itemId: item.id });
+        submittedHash = undefined;
+        localStorage.setItem('enza-last-order', JSON.stringify({ id: order.id, status: 'pending' }));
       }
-      submittedHash = undefined;
-      $('pay').disabled = false;
-      $('checkout').hidden = false;
-      $('details').textContent = `${item.name} · ${order.amount} USDC ${staticPreview ? 'preview price' : 'Testnet payment'} · expires ${new Date(order.expiresAt).toLocaleTimeString()}`;
-      $('issuer').textContent = config.issuer || 'Not configured';
-      $('merchant').textContent = config.merchant || 'Not configured';
-      $('payer').textContent = staticPreview ? 'No wallet used in this preview' : wallet.address;
-      $('memo').textContent = order.memo;
-      $('pay').textContent = staticPreview ? 'Complete simulated checkout ↗' : 'Authorize demo Testnet payment ↗';
+      showReview(order, item);
       status(staticPreview
         ? `Preview order ${order.id}. This hosted version will not submit a transaction or mark a real order paid.`
-        : `Pending order ${order.id}. Review the Testnet payment, then authorize it with the button below.`);
+        : `Pending order ${order.id}. Review the payment destination, asset and amount, then authorize with your wallet.`);
       $('checkout').scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
       status(error.message);
@@ -182,10 +240,51 @@ function itemCard(item) {
   return card;
 }
 
+async function payWithWallet() {
+  status('Staging the exact payment. Your wallet will review the transaction…');
+  let intent;
+  try {
+    intent = await api(`/orders/${order.id}/intent`, { customer: freighter.address });
+  } catch (error) {
+    if (error.message.includes('already assigned')) throw error;
+    status(`Could not stage the payment: ${error.message}`);
+    return;
+  }
+  if (intent.alreadyPaid) { submittedHash = intent.hash; return confirmOrder(submittedHash); }
+  if (intent.alreadySubmitted) { submittedHash = order.hash; return confirmOrder(submittedHash); }
+  let signedXdr;
+  try {
+    const signed = await freighterSign(intent.xdr, { networkPassphrase: intent.networkPassphrase });
+    if (signed.error) throw new Error(signed.error.message || 'The wallet refused to sign. Payment cancelled — the order stays pending.');
+    signedXdr = signed.signedTxXdr;
+  } catch (error) {
+    status(`Payment cancelled: ${error.message}\nThe pending order was neither submitted nor paid.`);
+    return;
+  }
+  status('Submitting the signed payment to Stellar Testnet…');
+  let result;
+  try {
+    result = await api(`/orders/${order.id}/submit`, { signedXdr });
+  } catch (error) {
+    status(`${error.message}\nNo payment has been recorded by this order. You can start a new order or retry.`);
+    return;
+  }
+  submittedHash = result.hash;
+  await confirmOrder(submittedHash);
+}
+
+async function payWithDemoWallet() {
+  status('Signing and submitting the authorized demo payment on Stellar Testnet…');
+  const result = await api(`/orders/${order.id}/pay`, {});
+  submittedHash = result.hash;
+  await confirmOrder(submittedHash);
+}
+
 try {
   config = staticPreview ? previewConfig : await api('/config');
   config.items.forEach(item => $('items').append(itemCard(item)));
   if (staticPreview) {
+    $('freighter-panel').hidden = true;
     $('wallet-panel').hidden = true;
     $('demo-intro').textContent = 'Choose a sample to preview the checkout flow. This hosted preview does not require a wallet and does not submit a payment.';
     $('review-network').textContent = 'Static preview · no network';
@@ -193,14 +292,52 @@ try {
     $('checkout-note').textContent = 'This hosted static preview does not use a wallet, submit a Testnet transaction, or fulfill a real order. The ticket shown is illustrative only.';
     status('Hosted static preview: choose a sample to explore checkout. No Testnet payment or on-chain order confirmation occurs here.');
   } else {
+    $('freighter-connect').hidden = false;
+    try {
+      const checkout = await api('/checkout');
+      $('freighter-status').hidden = false;
+      $('freighter-status').textContent = `Verified Testnet checkout contract: ${shorten(checkout.contractId)} (USDC SAC settled on Testnet)`;
+    } catch {}
     await refreshWallet();
-    status(config.configured
-      ? 'Choose a sample to create a pending Testnet order.'
-      : 'The merchant address and verified Testnet USDC issuer must be configured before checkout.');
+    if (config.configured && config.checkout) {
+      status(config.operatorConfigured
+        ? 'Connect your wallet or prepare the demo wallet, then choose a sample.'
+        : 'The server operator key must be configured (STELLAR_CHECKOUT_OPERATOR_SECRET) before creating orders.');
+    } else {
+      status('The checkout contract, merchant address and verified Testnet USDC issuer must be configured before checkout.');
+    }
+    await resumeLastOrder();
+    if (location.hash === '#event') $('event')?.scrollIntoView();
   }
-  if (location.hash === '#event') $('event')?.scrollIntoView();
 } catch (error) {
   status(`Could not reach the local demo API: ${error.message}`);
+}
+
+async function resumeLastOrder() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem('enza-last-order') || 'null'); } catch { return; }
+  if (!saved?.id) return;
+  let latest;
+  try { latest = await api(`/orders/${saved.id}`); } catch { localStorage.removeItem('enza-last-order'); return; }
+  if (!latest || latest.status !== 'pending') return;
+  order = latest;
+  submittedHash = latest.hash || undefined;
+  const item = config.items.find(candidate => candidate.id === latest.itemId);
+  if (item) showReview(order, item);
+  if (latest.hash) {
+    $('pay').disabled = true;
+    confirmOrder(latest.hash);
+  } else {
+    status(`Reconnected to pending order ${latest.id}. Review and authorize the payment.`);
+  }
+}
+
+function payNow() {
+  if (processing) return;
+  if (!order) return status('Select a sample first.');
+  if (submittedHash) return confirmOrder(submittedHash);
+  if (!staticPreview && lastRail === 'demo') return payWithDemoWallet();
+  return payWithWallet();
 }
 
 $('pay').onclick = async () => {
@@ -212,13 +349,12 @@ $('pay').onclick = async () => {
     $('pay').disabled = true;
     return;
   }
-  if (submittedHash) return confirmOrder(submittedHash);
   processing = true;
+  if (!order) { status('Select a sample first.'); processing = false; return; }
+  if (submittedHash) { processing = false; return confirmOrder(submittedHash); }
   try {
-    if (!order) throw new Error('Select a sample first');
-    status('Signing and submitting the authorized demo payment on Stellar Testnet…');
-    const result = await api(`/orders/${order.id}/pay`, {});
-    submittedHash = result.hash;
+    if (lastRail === 'wallet') await payWithWallet();
+    else await payWithDemoWallet();
   } catch (error) {
     try {
       const latest = await api(`/orders/${order.id}`);
@@ -231,5 +367,4 @@ $('pay').onclick = async () => {
   } finally {
     processing = false;
   }
-  if (submittedHash) confirmOrder(submittedHash);
 };
