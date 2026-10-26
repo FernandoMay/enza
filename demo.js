@@ -146,7 +146,7 @@ async function confirmOrder(hash) {
   try {
     status('Verifying settlement on-chain and on the Testnet ledger…');
     const paid = await api(`/orders/${order.id}/confirm`, { hash });
-    status(`Payment verified. Order ${paid.id} is paid${paid.ticket ? ' · demo ticket ' + paid.ticket : ''}. ${paid.paidAt} · contract order ${shorten(paid.soroban.onChainId)}`, paid.explorer);
+    status(`Payment verified. Order ${paid.id} is paid${paid.ticket ? ' · demo ticket ' + paid.ticket : ''}. Paid at ${paid.paidAt} · tx ${paid.hash} · contract order ${shorten(paid.soroban.onChainId)}`, paid.explorer);
     $('pay').disabled = true;
     localStorage.setItem('enza-last-order', JSON.stringify({ id: paid.id, status: 'paid', hash }));
   } catch (error) {
@@ -165,7 +165,7 @@ function showReview(order, item) {
   $('review-asset').textContent = staticPreview ? 'Illustrative USDC price' : 'Testnet USDC settled by the checkout contract';
   $('issuer').textContent = staticPreview ? config.issuer : (order.soroban?.token ? 'Verified USDC SAC ' + shorten(order.soroban.token) : (config.issuer || 'Not configured'));
   $('merchant').textContent = staticPreview ? config.merchant : (order.soroban?.merchant ? shorten(order.soroban.merchant) : 'Not configured');
-  $('payer').textContent = staticPreview ? config.wallet : (lastRail === 'wallet' ? freighter?.address : wallet?.address) || 'Not selected';
+  $('payer').textContent = staticPreview ? config.wallet : (order.customer ? order.customer : (lastRail === 'wallet' ? freighter?.address : wallet?.address) || 'Not selected');
   $('memo').textContent = staticPreview ? (order.memo || '—') : (order.soroban?.onChainId ? shorten(order.soroban.onChainId) + ' (on-chain bytes32 order id)' : '—');
   $('pay').textContent = staticPreview ? 'Complete simulated checkout ↗' : (lastRail === 'wallet' ? 'Sign payment with my wallet ↗' : 'Authorize demo Testnet payment ↗');
 }
@@ -250,8 +250,8 @@ async function payWithWallet() {
     status(`Could not stage the payment: ${error.message}`);
     return;
   }
-  if (intent.alreadyPaid) { submittedHash = intent.hash; return confirmOrder(submittedHash); }
-  if (intent.alreadySubmitted) { submittedHash = order.hash; return confirmOrder(submittedHash); }
+  if (intent.alreadyPaid) { submittedHash = intent.hash || order.hash; return confirmOrder(submittedHash); }
+  if (intent.alreadySubmitted) { submittedHash = intent.hash || order.hash; return confirmOrder(submittedHash); }
   let signedXdr;
   try {
     const signed = await freighterSign(intent.xdr, { networkPassphrase: intent.networkPassphrase });
@@ -330,14 +330,6 @@ async function resumeLastOrder() {
   } else {
     status(`Reconnected to pending order ${latest.id}. Review and authorize the payment.`);
   }
-}
-
-function payNow() {
-  if (processing) return;
-  if (!order) return status('Select a sample first.');
-  if (submittedHash) return confirmOrder(submittedHash);
-  if (!staticPreview && lastRail === 'demo') return payWithDemoWallet();
-  return payWithWallet();
 }
 
 $('pay').onclick = async () => {

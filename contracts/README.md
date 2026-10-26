@@ -1,6 +1,6 @@
 # EnZa Soroban checkout (Testnet only)
 
-This contract is an experimental on-chain payment-intent registry and checkout. It is not deployed yet, has not been audited, and must not be used with mainnet assets.
+This contract is an experimental on-chain payment-intent registry and checkout. It is deployed on Stellar Testnet only (see `contracts/deployments/testnet-2026-10-26.md` for the verified deployment), has not been audited, and must not be used with mainnet assets.
 
 ## Behavior
 

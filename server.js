@@ -6,11 +6,32 @@ import { Horizon, Keypair } from '@stellar/stellar-sdk';
 import { CATALOG, HORIZON_URL, NETWORK, configFromEnv, createOrder } from './payment.js';
 import { checkoutConfigFromEnv, createCheckoutService, orderOnChainId, verifySorobanSettlement } from './soroban.js';
 import { createDemoWallet } from './demo-wallet.js';
-const dbPath=new URL('./.data/orders.json',import.meta.url);
+const dataUrl=process.env.ENZA_DATA_DIR
+  ? new URL(`file://${process.env.ENZA_DATA_DIR.endsWith('/')?process.env.ENZA_DATA_DIR:process.env.ENZA_DATA_DIR+'/'}orders.json`)
+  : new URL('./.data/orders.json',import.meta.url);
+const dbPath=dataUrl;
 const distUrl=new URL('./dist/',import.meta.url);
-mkdirSync(new URL('./.data/',import.meta.url),{recursive:true});
-let orders=existsSync(dbPath)?JSON.parse(readFileSync(dbPath,'utf8')):{};
-const save=()=>{writeFileSync(new URL('./.data/orders.tmp',import.meta.url),JSON.stringify(orders));renameSync(new URL('./.data/orders.tmp',import.meta.url),dbPath)};
+mkdirSync(new URL('./',dbPath),{recursive:true});
+
+// Loads the order store defensively. A corrupt or unreadable JSON file would
+// otherwise crash the demo server at startup: the bad file is quarantined
+// next to itself and the demo starts with a fresh in-memory store. The local
+// JSON file is single-process demo storage, not a multi-instance backend.
+export function loadOrders(dbUrl, {read=readFileSync, rename=renameSync, exists=existsSync, log=console.error} = {}) {
+  if (!exists(dbUrl)) return {};
+  try {
+    const parsed=JSON.parse(read(dbUrl,'utf8'));
+    if (parsed && typeof parsed==='object' && !Array.isArray(parsed)) return parsed;
+    throw new Error('order store is not a JSON object');
+  } catch (error) {
+    const quarantine=new URL('./orders.corrupt-'+Date.now()+'.json',dbUrl);
+    try { rename(dbUrl,quarantine); } catch { /* keep going: file stays */ }
+    log(`Quarantined unreadable order store (${error.message}). Orders start empty; on-chain state on Testnet remains authoritative for settlement.`);
+    return {};
+  }
+}
+let orders=loadOrders(dbPath);
+const save=()=>{writeFileSync(new URL('./orders.tmp',dbPath),JSON.stringify(orders));renameSync(new URL('./orders.tmp',dbPath),dbPath)};
 const horizon=new Horizon.Server(HORIZON_URL);
 const demoWallet=createDemoWallet({horizon});
 const pendingPayments=new Map();
@@ -24,13 +45,13 @@ const servePage=(pathname,res)=>{
  res.writeHead(200,{'content-type':type,'cache-control':'no-store'});res.end(readFileSync(file));return true;
 };
 const body=async req=>{let s='';for await(const chunk of req){s+=chunk;if(s.length>20000)throw Error('Request too large')}return JSON.parse(s||'{}')};
-const publicOrder=o=>({id:o.id,itemId:o.itemId,kind:o.kind,amount:o.amount,status:o.status,expiresAt:o.expiresAt,hash:o.hash,customer:o.customer,paidAt:o.paidAt,ticket:o.ticket,soroban:o.soroban?{onChainId:o.soroban.onChainId,contractId:o.soroban.contractId,token:o.soroban.token,merchant:o.soroban.merchant}:null,explorer:o.hash?`https://stellar.expert/explorer/testnet/tx/${o.hash}`:null});
+const publicOrder=o=>({id:o.id,itemId:o.itemId,kind:o.kind,amount:o.amount,status:o.status,expiresAt:o.expiresAt,hash:o.hash,customer:o.customer,paidAt:o.paidAt,ticket:o.ticket,failureReason:o.failureReason??null,soroban:o.soroban?{onChainId:o.soroban.onChainId,contractId:o.soroban.contractId,token:o.soroban.token,merchant:o.soroban.merchant}:null,explorer:o.hash?`https://stellar.expert/explorer/testnet/tx/${o.hash}`:null});
 const usedHashes=excludeId=>new Set(Object.values(orders).filter(o=>o.id!==excludeId&&o.hash).map(o=>o.hash));
 
 // Lazily initialized Soroban checkout service. It reads configuration and the
 // operator signing key once per process; the key stays in memory only.
 let checkout=null;
-async function getCheckout(){
+async function getCheckout_(){
  if(checkout)return checkout;
  const config=checkoutConfigFromEnv();
  const secret=process.env.STELLAR_CHECKOUT_OPERATOR_SECRET;
@@ -42,9 +63,15 @@ async function getCheckout(){
  return checkout;
 }
 
-export async function handleRequest(req,res){
+export async function handleRequest(req,res,deps={}){
  try {
-  if(req.method==='POST'&&req.headers?.origin&&req.headers.origin!==`http://127.0.0.1:${process.env.PORT||3000}`)throw Error('Use the local ENZA demo page to authorize a payment');
+  // Origin checking is a convenience shield, NOT authentication. The real
+  // boundary is the 127.0.0.1 bind below, plus the loopback-only demo design.
+  const loopbackPort=String(process.env.PORT||3000);
+  const loopbackOrigins=[`http://127.0.0.1:${loopbackPort}`,`http://localhost:${loopbackPort}`];
+  const getCheckout=deps.getCheckout ?? getCheckout_;
+  const wallet=deps.demoWallet ?? demoWallet;
+  if(req.method==='POST'&&req.headers?.origin&&!loopbackOrigins.includes(req.headers.origin))throw Error('Use the local ENZA demo page to authorize a payment');
   const url=new URL(req.url,'http://localhost');
   if(req.method==='GET'&&url.pathname==='/api/config'){
    let paymentConfig;try{paymentConfig=configFromEnv()}catch{}
@@ -55,18 +82,25 @@ export async function handleRequest(req,res){
    const {deployment}=await getCheckout();
    return send(res,200,{network:'Testnet',...deployment});
   }
-  if(req.method==='GET'&&url.pathname==='/api/demo-wallet'){const config=configFromEnv();return send(res,200,await demoWallet.balances(config.issuer))}
-  if(req.method==='POST'&&url.pathname==='/api/demo-wallet/setup'){const config=configFromEnv();await demoWallet.setup(config.issuer);return send(res,200,await demoWallet.balances(config.issuer))}
+  if(req.method==='GET'&&url.pathname==='/api/demo-wallet'){const config=configFromEnv();return send(res,200,await wallet.balances(config.issuer))}
+  if(req.method==='POST'&&url.pathname==='/api/demo-wallet/setup'){const config=configFromEnv();await wallet.setup(config.issuer);return send(res,200,await wallet.balances(config.issuer))}
 
   if(req.method==='POST'&&url.pathname==='/api/orders'){
    const data=await body(req);
    const {config,deployment,service,operatorKeypair}=await getCheckout();
-   configFromEnv();
    const order=createOrder(data.itemId);
    order.customer=null;
    order.soroban={onChainId:orderOnChainId(order.id),contractId:deployment.contractId,token:deployment.token,merchant:deployment.merchant};
-   await service.createOnChainOrder(order,operatorKeypair);
+   // Persist the intent BEFORE the on-chain write: a crash between the ledger
+   // write and the local save would otherwise orphan a paid-possible order.
+   // A failed creation is marked failed honestly, never silently retried into paid.
    orders[order.id]=order;save();
+   try {
+    await service.createOnChainOrder(order,operatorKeypair);
+   } catch (error) {
+    order.status='failed';order.failureReason=String(error.message||error).slice(0,200);save();
+    return send(res,400,{error:`On-chain order creation failed. ${order.failureReason}`,id:order.id});
+   }
    return send(res,201,publicOrder(order));
   }
 
@@ -79,7 +113,7 @@ export async function handleRequest(req,res){
    if(req.method==='POST'&&match[2]==='intent'){
     if(order.status==='paid')return send(res,200,{alreadyPaid:true,hash:order.hash});
     if(Date.now()>=Date.parse(order.expiresAt))throw Error('Order expired. Select the sample again.');
-    if(order.hash)return send(res,200,{alreadySubmitted:true,xdr:null});
+    if(order.hash)return send(res,200,{alreadySubmitted:true,hash:order.hash,xdr:null});
     const data=await body(req);
     const customer=String(data?.customer||'');
     if(order.customer&&order.customer!==customer)throw Error('This order is already assigned to another customer');
@@ -108,11 +142,11 @@ export async function handleRequest(req,res){
     if(!pendingPayments.has(order.id)){
      const work=(async()=>{
       const {service,config}=await getCheckout();
-      await demoWallet.setup(config.issuer);
-      await demoWallet.ensureFunds(order,config.issuer);
-      const intent=await service.buildUnsignedPayment(order,demoWallet.address);
-      order.customer=demoWallet.address;save();
-      const signedXdr=demoWallet.signTransaction(intent.xdr,intent.networkPassphrase);
+      await wallet.setup(config.issuer);
+      await wallet.ensureFunds(order,config.issuer);
+      const intent=await service.buildUnsignedPayment(order,wallet.address);
+      order.customer=wallet.address;save();
+      const signedXdr=wallet.signTransaction(intent.xdr,intent.networkPassphrase);
       const {hash}=await service.submitSignedPayment({order,customerAddress:order.customer,signedXdr,usedHashes:usedHashes(order.id)});
       order.hash=hash;save();
       return {hash};

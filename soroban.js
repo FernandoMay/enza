@@ -165,8 +165,9 @@ export async function createCheckoutService(config, {rpcServer = new rpc.Server(
         if (status && status !== 'SUCCESS') throw new Error(`On-chain order creation failed (${status})`);
         return {hash: sent?.getTransactionResponse?.txHash ?? null};
       } catch (error) {
-        if (error instanceof contractNs.SentTransaction?.Errors?.TransactionStillPending) throw new Error('On-chain order creation still pending');
-        if (error instanceof contractNs.SentTransaction?.Errors?.SendFailed) throw new Error(`On-chain order creation failed: ${error.message}`);
+        const SentErrors = contractNs.SentTransaction?.Errors;
+        if (SentErrors && error instanceof SentErrors.TransactionStillPending) throw new Error('On-chain order creation still pending');
+        if (SentErrors && error instanceof SentErrors.SendFailed) throw new Error(`On-chain order creation failed: ${error.message}`);
         const message=String(error.message || error);
         if (message.includes('Error(Contract,')) throw new Error(`On-chain order creation rejected by contract: ${message.split('Error(Contract,')[1]?.slice(0,80) ?? message}`);
         throw error;
