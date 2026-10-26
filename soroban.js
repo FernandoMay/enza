@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { Asset, Networks, StrKey, TransactionBuilder, contract as contractNs, rpc } from '@stellar/stellar-sdk';
+import { Asset, Keypair, Networks, StrKey, TransactionBuilder, contract as contractNs, rpc } from '@stellar/stellar-sdk';
 
 // Soroban Testnet rail for the ENZA checkout, bound to the verified deployment
 // recorded in contracts/deployments/testnet-2026-10-26.md.
@@ -73,6 +73,7 @@ export function verifySorobanSettlement(order, evidence, usedHashes) {
 // exactly the intended correlation id and customer.
 export function validateSignedCheckoutTx(tx, {order, customerAddress, contractId, onChainId: expectedId}) {
   if (tx.source !== customerAddress) throw new Error('Transaction source is not the authorized customer');
+  if (!hasAuthorizedSignature(tx, customerAddress)) throw new Error('Signature does not verify for the authorized customer');
   const ops=tx.operations;
   if (!Array.isArray(ops) || ops.length!==1 || ops[0].type!=='invokeHostFunction') throw new Error('Expected exactly one contract invocation');
   const invocation=ops[0].func?.invokeContract;
@@ -86,6 +87,21 @@ export function validateSignedCheckoutTx(tx, {order, customerAddress, contractId
   const payer=args[1]?.value?.accountId?.ed25519?.value ? StrKey.encodeEd25519PublicKey(Buffer.from(args[1].value.accountId.ed25519.value)) : '';
   if (payer !== customerAddress) throw new Error('Invocation payer does not match the authorized customer');
   return true;
+}
+
+// Verifies that the envelope carries a valid signature by the authorized
+// customer before the server will relay it onward.
+export function hasAuthorizedSignature(tx, customerAddress) {
+  const signer = Keypair.fromPublicKey(customerAddress);
+  const raw = Buffer.from(signer.rawPublicKey());
+  const hash = Buffer.from(tx.hash());
+  return tx.signatures.some(wrapper => {
+    try {
+      const hint = Buffer.from(wrapper.hint?.value ?? wrapper.hint);
+      const sig = Buffer.from(wrapper.signature?.value ?? wrapper.signature);
+      return hint.equals(raw.subarray(raw.length - 4)) && signer.verify(hash, sig);
+    } catch { return false; }
+  });
 }
 
 export function amountToUnits(value) {

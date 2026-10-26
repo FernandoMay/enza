@@ -11,7 +11,8 @@ const CONTRACT_ID = 'CA4BAJTVSEU7NRRABUXRE22DZ35IBHFMITB3OMVG7JBYN2DM5VYKYDRP';
 const TOKEN_ID = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';
 const ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 const MERCHANT = 'GDTOM5LLLQRUXHRJRU3ACK75IP7JDB7DS5LFX4AA6NHEDG6BKPTEEOX4';
-const CUSTOMER = Keypair.random().publicKey();
+const CUSTOMER_SK = process.env.ENZA_TEST_CUSTOMER_SK ?? Keypair.random().secret();
+const CUSTOMER = Keypair.fromSecret(CUSTOMER_SK).publicKey();
 const config = {contractId: CONTRACT_ID, issuer: ISSUER, merchant: MERCHANT};
 
 function baseOrder() {
@@ -152,7 +153,7 @@ test('deterministic correlation id and exact amount arithmetic', () => {
   assert.throws(() => amountToUnits('0.00000001'), /Invalid Stellar amount/);
 });
 
-function buildSignedCheckoutTx({source = CUSTOMER, payer = CUSTOMER, contractId = CONTRACT_ID, functionName = 'pay_order', onChainId, extraOp = null}) {
+function buildSignedCheckoutTx({source = CUSTOMER, payer = CUSTOMER, contractId = CONTRACT_ID, functionName = 'pay_order', onChainId, signingKey = CUSTOMER_SK, extraOp = null}) {
   const serverSeq = new Account(source, '1');
   const args = [
     xdr.ScVal.scvBytes(Buffer.from(onChainId, 'hex')),
@@ -161,7 +162,9 @@ function buildSignedCheckoutTx({source = CUSTOMER, payer = CUSTOMER, contractId 
   const builder = new TransactionBuilder(serverSeq, {fee: '100', networkPassphrase: Networks.TESTNET})
     .addOperation(Operation.invokeContractFunction({contract: contractId, function: functionName, args}));
   if (extraOp) builder.addOperation(extraOp);
-  return TransactionBuilder.fromXDR(builder.setTimeout(30).build().toXDR(), Networks.TESTNET);
+  const raw = builder.setTimeout(30).build();
+  raw.sign(Keypair.fromSecret(signingKey));
+  return TransactionBuilder.fromXDR(raw.toXDR(), Networks.TESTNET);
 }
 
 const OTHER_CONTRACT = StrKey.encodeContract(Buffer.alloc(32, 1));
@@ -174,6 +177,11 @@ test('the wallet-signed invocation must match the stored intent exactly', () => 
   assert.throws(
     () => validateSignedCheckoutTx(buildSignedCheckoutTx({onChainId: order.soroban.onChainId, source: Keypair.random().publicKey()}), ctx),
     /source is not the authorized customer/
+  );
+  // A forged signature by anyone other than the customer is rejected before submission.
+  assert.throws(
+    () => validateSignedCheckoutTx(buildSignedCheckoutTx({onChainId: order.soroban.onChainId, signingKey: Keypair.random().secret()}), ctx),
+    /Signature does not verify/
   );
   assert.throws(
     () => validateSignedCheckoutTx(buildSignedCheckoutTx({onChainId: order.soroban.onChainId, contractId: OTHER_CONTRACT}), ctx),
