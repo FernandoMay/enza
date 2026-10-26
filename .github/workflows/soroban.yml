@@ -20,11 +20,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32v1-none
+      - name: Format check
+        working-directory: contracts/enza-checkout
+        run: cargo fmt --all -- --check
       - name: Test contract
         working-directory: contracts/enza-checkout
-        run: cargo test
+        run: cargo test --locked
       - name: Install Stellar CLI
-        uses: stellar/stellar-cli-action@v25
+        uses: stellar/stellar-cli@v28.1.0
       - name: Build optimized WASM
         working-directory: contracts/enza-checkout
         run: stellar contract build

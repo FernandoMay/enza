@@ -77,6 +77,9 @@ impl EnzaCheckout {
         amount: i128,
         expires_at: u64,
     ) -> Result<(), Error> {
+        // Keep the contract instance (admin/token/merchant config) alive along
+        // with order records; extend is a no-op unless TTL is below threshold.
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
         let admin: Address = env
             .storage()
             .instance()
@@ -104,14 +107,23 @@ impl EnzaCheckout {
             paid_at: None,
         };
         env.storage().persistent().set(&key, &order);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_BUMP);
-        OrderCreated { order_id, amount, expires_at }.publish(&env);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_BUMP);
+        OrderCreated {
+            order_id,
+            amount,
+            expires_at,
+        }
+        .publish(&env);
         Ok(())
     }
 
     /// Customer-authorized token transfer and order settlement happen atomically.
     /// The configured token address must be the intended Testnet asset contract.
     pub fn pay_order(env: Env, order_id: BytesN<32>, customer: Address) -> Result<(), Error> {
+        // Keep the contract instance (token/merchant config) alive with orders.
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
         customer.require_auth();
 
         let key = DataKey::Order(order_id.clone());
@@ -140,17 +152,15 @@ impl EnzaCheckout {
             .get(&DataKey::Merchant)
             .ok_or(Error::NotInitialized)?;
 
-        token::Client::new(&env, &token_address).transfer(
-            &customer,
-            &merchant,
-            &order.amount,
-        );
+        token::Client::new(&env, &token_address).transfer(&customer, &merchant, &order.amount);
 
         order.paid = true;
         order.customer = Some(customer.clone());
         order.paid_at = Some(now);
         env.storage().persistent().set(&key, &order);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_BUMP);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_BUMP);
         OrderPaid {
             order_id,
             customer,
@@ -169,15 +179,24 @@ impl EnzaCheckout {
     }
 
     pub fn admin(env: Env) -> Result<Address, Error> {
-        env.storage().instance().get(&DataKey::Admin).ok_or(Error::NotInitialized)
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)
     }
 
     pub fn token(env: Env) -> Result<Address, Error> {
-        env.storage().instance().get(&DataKey::Token).ok_or(Error::NotInitialized)
+        env.storage()
+            .instance()
+            .get(&DataKey::Token)
+            .ok_or(Error::NotInitialized)
     }
 
     pub fn merchant(env: Env) -> Result<Address, Error> {
-        env.storage().instance().get(&DataKey::Merchant).ok_or(Error::NotInitialized)
+        env.storage()
+            .instance()
+            .get(&DataKey::Merchant)
+            .ok_or(Error::NotInitialized)
     }
 }
 
