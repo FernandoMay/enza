@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Asset, Keypair, Networks, StrKey, TransactionBuilder, contract as contractNs, rpc } from '@stellar/stellar-sdk';
+import { PUBLIC_TESTNET_DEFAULTS } from './stellar-defaults.js';
 
 // Soroban Testnet rail for the ENZA checkout, bound to the verified deployment
 // recorded in contracts/deployments/testnet-2026-10-26.md.
@@ -23,13 +24,15 @@ export function sacForIssuer(issuer) {
   return new Asset(USDC_TESTNET_CODE, issuer).contractId(TESTNET_PASSPHRASE);
 }
 
-// Explicit configuration. The contract ID is not defaulted: an operator must
-// set the verified deployment that payment intent should settle against.
+// Public Testnet identity defaults to the verified deployment record; an env
+// override must still be well-formed. Whatever identity is in effect is
+// re-verified against the live chain at every startup (assertDeployment) —
+// a malformed or stale public value fails closed, never a wrong payment.
 export function checkoutConfigFromEnv(env=process.env) {
-  const contractId=env.STELLAR_CHECKOUT_CONTRACT_ID;
-  if (!contractId || !CONTRACT_ID_PATTERN.test(contractId)) throw new Error('Configure the verified Testnet checkout contract ID (STELLAR_CHECKOUT_CONTRACT_ID)');
-  const issuer=env.STELLAR_USDC_TESTNET_ISSUER, merchant=env.STELLAR_MERCHANT_ADDRESS;
-  if (!issuer || !merchant || !StrKey.isValidEd25519PublicKey(issuer) || !StrKey.isValidEd25519PublicKey(merchant)) throw new Error('Configure valid Testnet USDC issuer and merchant public address');
+  const contractId=env.STELLAR_CHECKOUT_CONTRACT_ID || PUBLIC_TESTNET_DEFAULTS.contractId;
+  if (!CONTRACT_ID_PATTERN.test(contractId)) throw new Error('The STELLAR_CHECKOUT_CONTRACT_ID override is not a valid Soroban contract ID');
+  const issuer=env.STELLAR_USDC_TESTNET_ISSUER || PUBLIC_TESTNET_DEFAULTS.issuer, merchant=env.STELLAR_MERCHANT_ADDRESS || PUBLIC_TESTNET_DEFAULTS.merchant;
+  if (!StrKey.isValidEd25519PublicKey(issuer) || !StrKey.isValidEd25519PublicKey(merchant)) throw new Error('The issuer and merchant overrides must be valid Testnet public addresses');
   const rpcUrl=env.STELLAR_RPC_URL || TESTNET_RPC_URL;
   return {contractId, issuer, merchant, rpcUrl, passphrase: TESTNET_PASSPHRASE};
 }

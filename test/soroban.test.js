@@ -129,13 +129,18 @@ test('deployment integrity ties the issuer, SAC and merchant together', () => {
   assert.notEqual(sacForIssuer(ISSUER), eurcSAC);
 });
 
-test('checkout config is explicit and refuses incomplete input', () => {
-  assert.throws(() => checkoutConfigFromEnv({}), /contract ID/);
+test('checkout config falls back to documented public defaults and refuses malformed overrides', () => {
+  // A clean clone with no environment at all yields the verified deployment.
+  assert.deepEqual(checkoutConfigFromEnv({}), {
+    contractId: CONTRACT_ID,
+    issuer: ISSUER,
+    merchant: MERCHANT,
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    passphrase: Networks.TESTNET
+  });
   assert.throws(() => checkoutConfigFromEnv({STELLAR_CHECKOUT_CONTRACT_ID: "invalid"}), /contract ID/);
-  assert.throws(
-    () => checkoutConfigFromEnv({STELLAR_CHECKOUT_CONTRACT_ID: CONTRACT_ID}),
-    /issuer and merchant/
-  );
+  assert.throws(() => checkoutConfigFromEnv({STELLAR_USDC_TESTNET_ISSUER: 'nope'}), /public addresses/);
+  assert.throws(() => checkoutConfigFromEnv({STELLAR_MERCHANT_ADDRESS: 'GAAAA'}), /public addresses/);
   const parsed = checkoutConfigFromEnv({
     STELLAR_CHECKOUT_CONTRACT_ID: CONTRACT_ID,
     STELLAR_USDC_TESTNET_ISSUER: ISSUER,
