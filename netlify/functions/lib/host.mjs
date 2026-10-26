@@ -19,6 +19,7 @@ import {
 } from '../../../soroban.js';
 import {
   orderFromChain,
+  payerFromSignedEnvelope,
   plannedOrder,
   publicOrder,
   statelessConfirm,
@@ -183,11 +184,20 @@ export async function handleApiRequest({ url, method, headers = {}, body: rawBod
 
       if (action === 'submit') {
         if (onchain.paid) return send(200, { alreadyPaid: true, hash: null });
-        const customer = String(data?.customer ?? '');
-        if (!customer) throw new Error('Create the payment intent before submitting');
-        const order = orderFromChain(id, onchain, { ...ref, customer }, shared);
+        // THE API CONTRACT: the browser sends only an envelope
+        // ({signedXdr}), exactly like the local server flow. The payer is
+        // derived from the signed envelope itself and proven by its own
+        // signature inside submitSignedPayment's validation — a browser-
+        // supplied payer claim is never trusted. If the browser does send a
+        // customer claim (e.g. an older client), a mismatch with the
+        // envelope fails closed instead of silently re-binding the order.
+        const signedXdr = String(data?.signedXdr || '');
+        const payer = payerFromSignedEnvelope(signedXdr);
+        if (!payer) throw new Error('Malformed signed payment envelope. Reconnect your wallet and sign the staged payment again.');
+        if (data?.customer && String(data.customer) !== payer) throw new Error('Signed envelope does not match the claimed customer');
+        const order = orderFromChain(id, onchain, { ...ref, customer: payer }, shared);
         const { hash, txStatus } = await service.submitSignedPayment({
-          order, customerAddress: order.customer, signedXdr: String(data?.signedXdr || ''), usedHashes: new Set(), timeoutMs: 20_000
+          order, customerAddress: payer, signedXdr, usedHashes: new Set(), timeoutMs: 20_000
         });
         if (txStatus !== 'SUCCESS') throw new Error('Transaction failed on-chain. No payment was recorded; start a new order.');
         return send(200, { hash });

@@ -310,3 +310,186 @@ test('publicOrder mirrors the local server payload shape', () => {
 test('randomUUID ids are valid order references', () => {
   assert.match(randomUUID(), UUID_PATTERN);
 });
+
+
+// ---- full hosted submit contract against a REAL service over a fake RPC ----
+// The browser's exact payload is {signedXdr} only (demo.js payWithWallet);
+// the payer identity must come from the verified signed envelope itself.
+import { createCheckoutService, sacForIssuer } from '../soroban.js';
+
+// Unsigned envelope: same structure but no signature (failure-path tests).
+const unsignedEnvelope = (payerPubKey, onChainIdHex, contract = CONTRACT_ID) => {
+  const args = [
+    nativeToScVal(Buffer.from(onChainIdHex, 'hex'), { type: 'bytes' }),
+    new Address(payerPubKey).toScVal()
+  ];
+  return new TransactionBuilder(new Account(payerPubKey, '123'), { fee: '100', networkPassphrase: Networks.TESTNET })
+    .addOperation(Operation.invokeContractFunction({ contract, function: 'pay_order', args }))
+    .setTimeout(60)
+    .build();
+};
+
+function fakeChainRuntime({ paidReadsFrom = null, txRecordFor = null } = {}) {
+  let reads = 0;
+  // Keys mirror the contract's get_order fields exactly (expires_at, paid_at).
+  const pending = { amount: 50000000n, customer: '', expires_at: future(600), paid: false, paid_at: 0n };
+  const paidRecordFactory = payerKey => ({ amount: 50000000n, customer: payerKey, expires_at: future(600), paid: true, paid_at: future(-30) });
+  const sends = [];
+  const rpc = {
+    getNetwork: async () => ({ passphrase: Networks.TESTNET }),
+    getAccount: async pk => ({ accountId: pk, sequence: '123' }),
+    sendTransaction: async tx => {
+      const hash = Buffer.from(tx.hash()).toString('hex');
+      sends.push(hash);
+      return { status: 'PENDING', hash };
+    },
+    getTransaction: async hash => (txRecordFor && txRecordFor[hash]) || { status: 'PENDING' }
+  };
+  const client = {
+    // First read is typically the pre-submit check; `paidReadsFrom` flips the
+    // record to its paid variant for later reads (duplicate-submission tests).
+    get_order: async () => {
+      reads += 1;
+      const usePaid = paidReadsFrom !== null && reads > paidReadsFrom;
+      return { result: { tag: 'ok', value: usePaid ? paidRecordFactory(customer.publicKey()) : pending } };
+    },
+    token: async () => ({ result: { value: sacForIssuer(ISSUER) } }),
+    merchant: async () => ({ result: { value: MERCHANT } }),
+    admin: async () => ({ result: { value: other.publicKey() } }),
+    create_order: async () => ({ signAndSend: async () => ({ getTransactionResponse: { status: 'SUCCESS', txHash: 'c'.repeat(64) } }) }),
+    pay_order: async args => {
+      const idHex = Buffer.from(args.order_id.value ?? args.order_id).toString('hex');
+      return { built: { toXDR: () => unsignedEnvelope(args.customer, idHex).toXDR() } };
+    }
+  };
+  const config = { contractId: CONTRACT_ID, issuer: ISSUER, merchant: MERCHANT, rpcUrl: 'https://fake.test', passphrase: Networks.TESTNET };
+  const servicePromise = createCheckoutService(config, { rpcServer: rpc, client });
+  return {
+    config,
+    operatorKeypair: Keypair.random(),
+    servicePromise,
+    deploymentPromise: servicePromise.then(s => s.assertDeployment()),
+    sends
+  };
+}
+
+test('host submit: exact browser payload {signedXdr} only — payer derived from the signed envelope', async () => {
+  resetRuntime();
+  const ID = '10111111-1111-4111-8111-111111111111';
+  const tx = signedPaymentTx(customer, orderOnChainId(ID));
+  const runtime = fakeChainRuntime({ txRecordFor: { [txHashHex(tx)]: { status: 'SUCCESS', envelopeXdr: tx.toXDR() } } });
+  const result = await handleApiRequest({
+    url: `https://enza.test/api/orders/${ID}/submit`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ signedXdr: tx.toXDR() }), // exactly what demo.js payWithWallet sends
+    env: {}, runtime
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.payload.hash, txHashHex(tx));
+  assert.equal(runtime.sends.length, 1);
+});
+
+test('host submit: missing envelope fails closed', async () => {
+  resetRuntime();
+  const ID = '20111111-1111-4111-8111-111111111111';
+  const runtime = fakeChainRuntime();
+  const result = await handleApiRequest({
+    url: `https://enza.test/api/orders/${ID}/submit`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ signedXdr: '' }), env: {}, runtime
+  });
+  assert.equal(result.status, 400);
+  assert.match(result.payload.error, /Malformed signed payment envelope/);
+});
+
+test('host submit: browser payer claim that mismatches theSigned envelope fails closed', async () => {
+  resetRuntime();
+  const ID = '30111111-1111-4111-8111-111111111111';
+  const tx = signedPaymentTx(other, orderOnChainId(ID));
+  const result = await handleApiRequest({
+    url: `https://enza.test/api/orders/${ID}/submit`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ signedXdr: tx.toXDR(), customer: customer.publicKey() }), env: {}, runtime: fakeChainRuntime()
+  });
+  assert.equal(result.status, 400);
+  assert.match(result.payload.error, /does not match the claimed customer/);
+});
+
+test('host submit: envelope for a different order id is rejected inside validation', async () => {
+  resetRuntime();
+  const OTHER_ORDER = '40111111-1111-4111-8111-111111111111';
+  const claimedOrder = '50111111-1111-4111-8111-111111111111';
+  const tx = signedPaymentTx(customer, orderOnChainId(OTHER_ORDER));
+  const result = await handleApiRequest({
+    url: `https://enza.test/api/orders/${claimedOrder}/submit`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ signedXdr: tx.toXDR() }), env: {}, runtime: fakeChainRuntime()
+  });
+  assert.equal(result.status, 400);
+  assert.match(result.payload.error, /not match the order intent/);
+});
+
+test('host submit: garbage signer bytes fail closed (signature does not verify)', async () => {
+  resetRuntime();
+  const ID = '60111111-1111-4111-8111-111111111111';
+  const tx = unsignedEnvelope(customer.publicKey(), orderOnChainId(ID)); // built but UNsigned
+  const result = await handleApiRequest({
+    url: `https://enza.test/api/orders/${ID}/submit`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ signedXdr: tx.toXDR() }), env: {}, runtime: fakeChainRuntime()
+  });
+  assert.equal(result.status, 400);
+  assert.match(result.payload.error, /Signature does not verify|not the authorized/);
+});
+
+test('host submit: chain already paid short-circuits duplicate submission without sending', async () => {
+  resetRuntime();
+  const ID = '70111111-1111-4111-8111-111111111111';
+  // get_order flips to paid after the first read: the first submit went
+  // through, the second call must return alreadyPaid without a 2nd send.
+  const tx = signedPaymentTx(customer, orderOnChainId(ID));
+  const runtime = fakeChainRuntime({ paidReadsFrom: 1, txRecordFor: { [txHashHex(tx)]: { status: 'SUCCESS', envelopeXdr: tx.toXDR() } } });
+  const first = await handleApiRequest({
+    url: `https://enza.test/api/orders/${ID}/submit`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ signedXdr: tx.toXDR() }), env: {}, runtime
+  });
+  assert.equal(first.status, 200);
+  const second = await handleApiRequest({
+    url: `https://enza.test/api/orders/${ID}/submit`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ signedXdr: tx.toXDR() }), env: {}, runtime
+  });
+  assert.equal(second.status, 200);
+  assert.equal(second.payload.alreadyPaid, true);
+  assert.equal(runtime.sends.length, 1, 'no double submission');
+});
+
+test('host submit: failed transaction never marks paid and returns honest 400', async () => {
+  resetRuntime();
+  const ID = '80111111-1111-4111-8111-111111111111';
+  const tx = signedPaymentTx(customer, orderOnChainId(ID));
+  const runtime = fakeChainRuntime({ txRecordFor: { [txHashHex(tx)]: { status: 'FAILED', envelopeXdr: tx.toXDR() } } });
+  const result = await handleApiRequest({
+    url: `https://enza.test/api/orders/${ID}/submit`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ signedXdr: tx.toXDR() }), env: {}, runtime
+  });
+  assert.equal(result.status, 400);
+  assert.match(result.payload.error, /Transaction failed on-chain. No payment was recorded/);
+});
+
+test('host intent: staged envelope is built for exactly the requested customer address', async () => {
+  resetRuntime();
+  const ID = '90111111-1111-4111-8111-111111111111';
+  const result = await handleApiRequest({
+    url: `https://enza.test/api/orders/${ID}/intent`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ customer: customer.publicKey() }), env: {}, runtime: fakeChainRuntime()
+  });
+  assert.equal(result.status, 200);
+  const tx = TransactionBuilder.fromXDR(result.payload.xdr, Networks.TESTNET);
+  assert.equal(tx.source, customer.publicKey(), 'envelope source is the requested customer');
+  assert.equal(String(tx.operations[0].func.invokeContract.functionName), 'pay_order');
+  assert.equal(result.payload.networkPassphrase, Networks.TESTNET);
+});
