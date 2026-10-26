@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Networks, StrKey } from '@stellar/stellar-sdk';
+import { PUBLIC_TESTNET_DEFAULTS } from './stellar-defaults.js';
 
 export const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 export const NETWORK = Networks.TESTNET;
@@ -28,8 +29,8 @@ export function amountToUnits(value) {
   return BigInt(whole)*10000000n + BigInt(fraction.padEnd(7,'0'));
 }
 export function configFromEnv(env=process.env) {
-  const issuer=env.STELLAR_USDC_TESTNET_ISSUER, merchant=env.STELLAR_MERCHANT_ADDRESS;
-  if (!issuer || !merchant || !StrKey.isValidEd25519PublicKey(issuer) || !StrKey.isValidEd25519PublicKey(merchant)) throw new Error('Configure valid Testnet USDC issuer and merchant public address');
+  const issuer=env.STELLAR_USDC_TESTNET_ISSUER || PUBLIC_TESTNET_DEFAULTS.issuer, merchant=env.STELLAR_MERCHANT_ADDRESS || PUBLIC_TESTNET_DEFAULTS.merchant;
+  if (!StrKey.isValidEd25519PublicKey(issuer) || !StrKey.isValidEd25519PublicKey(merchant)) throw new Error('The issuer and merchant overrides must be valid Testnet public addresses');
   return {issuer,merchant};
 }
 export function createOrder(itemId) {

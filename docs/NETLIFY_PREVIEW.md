@@ -73,17 +73,24 @@ run the live flow. All values must come from the recorded deployment in
 
 Variable | Kind | Where from
 ---|---|---
-`STELLAR_USDC_TESTNET_ISSUER` | public config | documented Testnet USDC SAC issuer
-`STELLAR_MERCHANT_ADDRESS` | public config | merchant Testnet address
-`STELLAR_CHECKOUT_CONTRACT_ID` | public config | deployed `CA4BAJT…YKYDRP`
-`STELLAR_CHECKOUT_OPERATOR_SECRET` | **secret** | merchant Testnet key — configured as a Netlify server-side secret (serverless runtime variable). Never in the repository, logs or client bundle.
+`STELLAR_CHECKOUT_OPERATOR_SECRET` | **secret — the ONLY required variable** | contract admin Testnet key — configured as a Netlify server-side secret (serverless runtime variable). Never in the repository, logs or client bundle. Required only for on-chain order creation, because the contract enforces admin authorization for `create_order`.
+`STELLAR_USDC_TESTNET_ISSUER` | optional override | defaults to the documented Testnet USDC SAC issuer; set only to point at a different verified deployment
+`STELLAR_MERCHANT_ADDRESS` | optional override | defaults to the deployed merchant address
+`STELLAR_CHECKOUT_CONTRACT_ID` | optional override | defaults to the deployed `CA4BAJT…YKYDRP`
 `STELLAR_RPC_URL` *(optional)* | public config | `https://soroban-testnet.stellar.org` unless overridden
 
+The public defaults come from the verified deployment record
+(`stellar-defaults.js`, sourced from
+`contracts/deployments/testnet-2026-10-26.md`) and are re-verified against the
+live chain at every startup (`assertDeployment`) — a stale or malformed value
+fails closed at boot, never at payment time.
+  variables the runtime refuses to start (no mock, no silent fallback).
 - Public values are read at runtime by functions; they are not build-time
   values in `netlify.toml` and never reach the client bundle.
 - Fail-closed behavior: without `STELLAR_CHECKOUT_OPERATOR_SECRET`, order
   creation answers with an actionable setup message; without the other
-  variables the runtime refuses to start (no mock, no silent fallback).
+  variables being well-formed (if overridden), the deployment refuses to serve
+  checkout by reporting its real configuration state.
 - The static client bundle never contains any of these variables; the browser
   code only calls same-origin `/api/…` endpoints.
 

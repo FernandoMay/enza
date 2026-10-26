@@ -329,7 +329,7 @@ const unsignedEnvelope = (payerPubKey, onChainIdHex, contract = CONTRACT_ID) => 
     .build();
 };
 
-function fakeChainRuntime({ paidReadsFrom = null, txRecordFor = null } = {}) {
+function fakeChainRuntime({ paidReadsFrom = null, txRecordFor = null, noOperator = false } = {}) {
   let reads = 0;
   // Keys mirror the contract's get_order fields exactly (expires_at, paid_at).
   const pending = { amount: 50000000n, customer: '', expires_at: future(600), paid: false, paid_at: 0n };
@@ -366,7 +366,7 @@ function fakeChainRuntime({ paidReadsFrom = null, txRecordFor = null } = {}) {
   const servicePromise = createCheckoutService(config, { rpcServer: rpc, client });
   return {
     config,
-    operatorKeypair: Keypair.random(),
+    operatorKeypair: noOperator ? null : Keypair.random(),
     servicePromise,
     deploymentPromise: servicePromise.then(s => s.assertDeployment()),
     sends
@@ -492,4 +492,42 @@ test('host intent: staged envelope is built for exactly the requested customer a
   assert.equal(tx.source, customer.publicKey(), 'envelope source is the requested customer');
   assert.equal(String(tx.operations[0].func.invokeContract.functionName), 'pay_order');
   assert.equal(result.payload.networkPassphrase, Networks.TESTNET);
+});
+
+test('host glue: intent and submit work WITHOUT an operator key on existing on-chain orders', async () => {
+  resetRuntime();
+  const ID = 'a0111111-1111-4111-8111-111111111111';
+  const tx = signedPaymentTx(customer, orderOnChainId(ID));
+  const runtime = fakeChainRuntime({
+    noOperator: true,
+    txRecordFor: { [txHashHex(tx)]: { status: 'SUCCESS', envelopeXdr: tx.toXDR() } }
+  });
+  // Purchase steps never sign with the admin key: intent staging builds the
+  // envelope for the customer, and submit is the customer's own signature.
+  const intent = await handleApiRequest({
+    url: `https://enza.test/api/orders/${ID}/intent`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ customer: customer.publicKey() }), env: {}, runtime
+  });
+  assert.equal(intent.status, 200);
+  assert.equal(TransactionBuilder.fromXDR(intent.payload.xdr, Networks.TESTNET).source, customer.publicKey());
+  const submitted = await handleApiRequest({
+    url: `https://enza.test/api/orders/${ID}/submit`, method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ signedXdr: tx.toXDR() }), env: {}, runtime
+  });
+  assert.equal(submitted.status, 200);
+  assert.equal(submitted.payload.hash, txHashHex(tx));
+});
+
+test('host glue: creating an order without an operator key fails explicitly before any write', async () => {
+  resetRuntime();
+  const runtime = fakeChainRuntime({ noOperator: true });
+  const result = await handleApiRequest({
+    url: 'https://enza.test/api/orders', method: 'POST',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    body: JSON.stringify({ itemId: 'bottle' }), env: {}, runtime
+  });
+  assert.equal(result.status, 400);
+  assert.match(result.payload.error, /STELLAR_CHECKOUT_OPERATOR_SECRET/);
 });

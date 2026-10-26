@@ -50,13 +50,17 @@ const usedHashes=excludeId=>new Set(Object.values(orders).filter(o=>o.id!==exclu
 
 // Lazily initialized Soroban checkout service. It reads configuration and the
 // operator signing key once per process; the key stays in memory only.
+// The SERVICE runs without the operator key (deployment reads, intent staging,
+// submit and confirm never sign as the admin); only on-chain order creation
+// requires it, because the contract itself enforces admin auth for
+// create_order. Operations that need the key fail with an explicit error.
 let checkout=null;
 async function getCheckout_(){
  if(checkout)return checkout;
  const config=checkoutConfigFromEnv();
  const secret=process.env.STELLAR_CHECKOUT_OPERATOR_SECRET;
- if(!secret)throw Error('Configure the Testnet operator key (STELLAR_CHECKOUT_OPERATOR_SECRET) to create checkout orders');
- const operatorKeypair=Keypair.fromSecret(secret);
+ let operatorKeypair=null;
+ if(secret)operatorKeypair=Keypair.fromSecret(secret);
  const service=await createCheckoutService(config);
  const deployment=await service.assertDeployment();
  checkout={config,deployment,service,operatorKeypair};
@@ -88,6 +92,10 @@ export async function handleRequest(req,res,deps={}){
   if(req.method==='POST'&&url.pathname==='/api/orders'){
    const data=await body(req);
    const {config,deployment,service,operatorKeypair}=await getCheckout();
+   // The contract requires the admin for create_order: without a configured
+   // operator key nothing on-chain or in the store is written, and the error
+   // is an actionable setup message.
+   if(!operatorKeypair)throw Error('Configure the Testnet operator key (STELLAR_CHECKOUT_OPERATOR_SECRET) to create checkout orders');
    const order=createOrder(data.itemId);
    order.customer=null;
    order.soroban={onChainId:orderOnChainId(order.id),contractId:deployment.contractId,token:deployment.token,merchant:deployment.merchant};

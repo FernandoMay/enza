@@ -24,9 +24,13 @@ test('amounts round-trip in integer stroops without floating point', () => {
   assert.throws(() => amountToUnits('0.00000001'), /Invalid Stellar amount/);
 });
 
-test('demo configuration requires a valid Testnet issuer and merchant', () => {
-  const good = {STELLAR_USDC_TESTNET_ISSUER: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5', STELLAR_MERCHANT_ADDRESS: 'GDTOM5LLLQRUXHRJRU3ACK75IP7JDB7DS5LFX4AA6NHEDG6BKPTEEOX4'};
-  assert.deepEqual(configFromEnv(good), {issuer: good.STELLAR_USDC_TESTNET_ISSUER, merchant: good.STELLAR_MERCHANT_ADDRESS});
-  assert.throws(() => configFromEnv({}), /Configure valid Testnet/);
-  assert.throws(() => configFromEnv({STELLAR_USDC_TESTNET_ISSUER: 'nope', STELLAR_MERCHANT_ADDRESS: good.STELLAR_MERCHANT_ADDRESS}), /Configure valid Testnet/);
+test('demo configuration defaults to the verified Testnet identity and refuses malformed overrides', () => {
+  const ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+  const MERCHANT = 'GDTOM5LLLQRUXHRJRU3ACK75IP7JDB7DS5LFX4AA6NHEDG6BKPTEEOX4';
+  const good = {STELLAR_USDC_TESTNET_ISSUER: ISSUER, STELLAR_MERCHANT_ADDRESS: MERCHANT};
+  assert.deepEqual(configFromEnv(good), {issuer: ISSUER, merchant: MERCHANT});
+  // A clean clone with no environment yields the same verified identity.
+  assert.deepEqual(configFromEnv({}), {issuer: ISSUER, merchant: MERCHANT});
+  assert.throws(() => configFromEnv({STELLAR_USDC_TESTNET_ISSUER: 'nope', STELLAR_MERCHANT_ADDRESS: MERCHANT}), /public addresses/);
+  assert.throws(() => configFromEnv({STELLAR_MERCHANT_ADDRESS: 'GAAAA'}), /public addresses/);
 });
