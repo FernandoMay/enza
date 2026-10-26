@@ -4,8 +4,8 @@ import { Asset, Horizon, Networks, Operation, TransactionBuilder, BASE_FEE, StrK
 export const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 export const NETWORK = Networks.TESTNET;
 export const CATALOG = Object.freeze({
-  bottle: { name: 'Reusable bottle (sample product)', kind: 'product', units: 125000000n },
-  antidote: { name: 'ENZA-hosted sound healing session (demo ticket)', kind: 'event', units: 200000000n }
+  bottle: { name: 'Reusable bottle (sample product)', kind: 'product', units: 50000000n },
+  antidote: { name: 'ENZA-hosted sound healing session (demo ticket)', kind: 'event', units: 100000000n }
 });
 export const unitsToAmount = units => `${units / 10000000n}.${(units % 10000000n).toString().padStart(7,'0')}`;
 export function amountToUnits(value) {
@@ -35,6 +35,12 @@ export async function buildPayment(order, source, config, horizon=new Horizon.Se
     .addOperation(Operation.payment({destination:config.merchant,asset:new Asset('USDC',config.issuer),amount:order.amount}))
     .addMemo((await import('@stellar/stellar-sdk')).Memo.text(order.memo))
     .setTimeout(Math.max(1,Math.floor((Date.parse(order.expiresAt)-Date.now())/1000))).build().toXDR();
+}
+export function validateSignedPayment(tx, order, config) {
+  if (tx.memo?.type !== 'text' || Buffer.from(tx.memo.value).toString('utf8') !== order.memo || tx.operations.length !== 1) throw new Error('Transaction does not match order');
+  const op=tx.operations[0];
+  if (op.type !== 'payment' || op.destination !== config.merchant || op.asset.code !== 'USDC' || op.asset.issuer !== config.issuer || amountToUnits(op.amount) !== amountToUnits(order.amount)) throw new Error('Payment details changed');
+  if (!StrKey.isValidEd25519PublicKey(tx.source)) throw new Error('Invalid source');
 }
 export function verifyPayment(order, hash, transaction, operations, config, usedHashes) {
   if (!/^[a-f0-9]{64}$/i.test(hash)) throw new Error('Invalid transaction hash');

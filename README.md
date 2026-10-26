@@ -1,40 +1,29 @@
-# ENZA — Web2 to Web3 Commerce Blueprint
+# ENZA Movement
 
-ENZA is an operating conscious-lifestyle marketplace evolving from Web2 commerce into a wallet-enabled Web3 platform. This repository contains the presentation site used to align the hackathon team around that transition.
+ENZA Movement is a human-facing concept site for two connected experiences: **Shop EnZa**, the existing conscious-commerce business at [enza.in](https://enza.in/), and **Experience Antidote**, the proposed music and cultural programme. This repository also contains a separate, clearly labelled Stellar **Testnet** USDC checkout demo for one sample product and one sample ENZA-hosted experience.
 
-The product is for human customers, human vendors and a human ENZA operator. Codex and other agents are used only to build and test it.
+The live EnZa store, its real products, cart, accounts, Cashfree checkout and other payment methods are **not** implemented or changed here. The repository does not have access to the store's source or private APIs. The Antidote event and ticket are samples; Axess.Zone is not connected. See [the audit and implementation plan](docs/IMPLEMENTATION_PLAN.md) before extending either integration.
 
-Agents and contributors must begin with [`thesis.md`](thesis.md). It defines the USDC payment flow, Stellar skill requirements, security boundaries and the hackathon definition of done.
+Coding agents must read [AGENTS.md](AGENTS.md) and [thesis.md](thesis.md). This isolated demo uses a disposable server-held Testnet wallet so visitors can authorize sample payments without installing a wallet extension. A production customer checkout still needs a customer-controlled signing flow.
 
-## Open the site
+## Pages
 
-Open `index.html` directly or serve the repository root with any static web server. The current private presentation is also available at [enza-commerce-blueprint.info-enzastore.chatgpt.site](https://enza-commerce-blueprint.info-enzastore.chatgpt.site).
+- `index.html` — ENZA Movement site, with paths to the live EnZa shop, Antidote concept, and Testnet demo.
+- `demo.html` — sample product and experience checkout using the same local payment API.
+- `blueprint.html` — preserved strategy presentation from this repository's earlier homepage.
 
-## Narrative
+## GitHub Pages preview
 
-The first two sections explain ENZA's business and holistic-wellbeing purpose. The remaining sections cover:
+The public site at [infoenzastore-cmd.github.io/enza](https://infoenzastore-cmd.github.io/enza/) serves the source HTML, CSS and JavaScript from `main`. Its checkout is an explicitly labeled **simulation**: it lets visitors select the sample product or experience and see a preview ticket, but sends no payment and claims no on-chain confirmation. GitHub Pages cannot run this repository's Node API. Use the local Testnet steps below for real network settlement.
 
-- the evolution from the existing Web2 marketplace;
-- improved product discovery and vendor operations;
-- Stellar wallets as a proposed vendor payout destination;
-- deterministic order allocation and reconciliation;
-- a focused Stellar testnet hackathon demonstration.
+## Local Testnet demo
 
-## Next implementation
+Use Node.js 22 or newer. The demo is local only; do not expose the API publicly.
 
-1. Import and verify real catalogue and vendor records.
-2. Build preference-led product discovery.
-3. Add an integer-minor-unit order allocation engine.
-4. Store verified vendor wallet destinations safely.
-5. Execute an authorised Stellar testnet payout.
-6. Attach the transaction hash and confirmation status to the payout record.
+1. Run `npm ci`, `npm test`, and `npm run build`.
+2. Verify the current Stellar Testnet USDC issuer against an [official Circle address list](https://developers.circle.com/stablecoins/usdc-contract-addresses). Copy `.env.example` to ignored `.env`, then set `STELLAR_USDC_TESTNET_ISSUER` and `STELLAR_MERCHANT_ADDRESS` to public Testnet addresses. The merchant must have an authorized trustline to that exact USDC asset. Never put a secret key in `.env`.
+3. In one terminal, run `set -a; source .env; set +a; npm start`. This command builds the pages and starts the API and website together at `http://127.0.0.1:3000/`. `npm run dev` is an alias for the same full demo; port 5173 is not used.
+4. Open `http://127.0.0.1:3000/` for the site or `http://127.0.0.1:3000/demo.html` for the sample checkout. Click **Prepare demo wallet**. The server creates a disposable account in memory, requests Testnet XLM from Friendbot, and adds the configured USDC trustline. Copy its **public** address into the [Circle faucet](https://faucet.circle.com/) with Stellar Testnet selected, then refresh the balance. One current 20 USDC faucet claim covers the two samples, priced at 5 and 10 test USDC.
+5. Select a sample, review the network, issuer, destination, payer, amount and memo, then click **Authorize demo Testnet payment**. The local server signs with its demo wallet and checks the resulting transaction on Horizon before marking the order paid or issuing the demo ticket. No browser extension or visitor secret key is needed.
 
-## Current boundary
-
-This repository currently contains a strategy and presentation site. No live AI, payment, tax engine, wallet connection or vendor payout is implemented. Testnet assets have no real monetary value.
-
-## ENZA Movement Testnet demo
-
-The repository also contains a separate **sample** checkout for one wellness product and one ENZA-hosted sound healing experience. This is not connected to the live EnZa store. See [the implementation plan](docs/IMPLEMENTATION_PLAN.md), [Stellar setup](docs/STELLAR_INTEGRATION.md), and [demo script](docs/HACKATHON_DEMO.md).
-
-On Node.js 22+, run `npm ci`, then `npm start` in one terminal and `npm run dev` in another. Open `http://127.0.0.1:5173/demo.html`. Configure the public Testnet issuer and merchant address as described in the setup document before attempting a transaction. `npm test` exercises server verification rules without spending test assets.
+The server-held signing key exists only in process memory. Restarting the server creates a new wallet address; do not fund more than needed, and keep the process running through both payments. The API binds to `127.0.0.1` and must not be exposed publicly. A successful build or test suite does not prove a payment succeeded. See [Stellar integration notes](docs/STELLAR_INTEGRATION.md) and the [demo script](docs/HACKATHON_DEMO.md) for details.
