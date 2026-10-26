@@ -87,7 +87,15 @@ Variable | Kind | Where from
 - The static client bundle never contains any of these variables; the browser
   code only calls same-origin `/api/…` endpoints.
 
-## Preview contexts
+## API contract note (hosted submit)
+
+`POST /api/orders/:id/submit` accepts `{ signedXdr }` exactly like the local
+server. The payer is **derived from the signed envelope's own source field** and
+proven by its signature and the exact `pay_order(order_id, payer)` invocation
+binding inside `validateSignedCheckoutTx` — a browser-supplied payer claim is
+never trusted; if present, a mismatched claim rejects with a clear error.
+
+## Preview and production boundaries
 
 - The site's PR previews build `dist` plus the functions; the Soroban flow runs
   only under the *deploy preview* URL of this branch after the variables are
