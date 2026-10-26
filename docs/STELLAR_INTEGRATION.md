@@ -46,6 +46,10 @@ Open `http://127.0.0.1:3000/demo.html`.
 
 No automatic vendor payouts or refunds are implemented: payouts (`settlement.js` allocation engine) remain a deterministic preview and would need a separately reviewed authorisation and accounting design before execution.
 
+## Local order storage (single process, demo only)
+
+Orders live in `.data/orders.json` next to `server.js` (created on demand; a git-ignored directory). The file is written atomically (write-then-rename) and is quarantined at startup when unreadable — a corrupt store never blocks the server: it logs the quarantine, starts with an empty in-memory store, and on-chain Testnet state remains authoritative for anything already settled. This is single-process demo storage, NOT a multi-instance backend: no two server processes may share a data directory, and horizontal scaling is explicitly out of scope. Tests never touch your real demo store — they run against their own throwaway directory (`ENZA_DATA_DIR`, documented in `.env.example`).
+
 ## Mocks vs on-chain evidence
 
 - `npm test` — 24 deterministic unit tests with no network access (settlement matrix, signed-invocation validation, demo wallet, order/config primitives).

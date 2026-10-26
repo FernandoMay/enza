@@ -9,10 +9,21 @@ const previewConfig = {
   wallet: 'No wallet used in this preview',
   items: [
     { id: 'bottle', name: 'Reusable bottle (sample product)', kind: 'product', amount: '5.00' },
-    { id: 'antidote', name: 'ENZA-hosted sound healing session (demo ticket)', kind: 'event', amount: '10.00' }
+    { id: 'antidote', name: 'ENZA-hosted sound healing session (demo ticket)', kind: 'event', amount: '10.00' },
+    { id: 'khakhra', name: 'Khapli Wheat Khakhra Organic Plain (enza.in showcase)', kind: 'showcase', amount: '5.00' }
   ]
 };
 const TESTNET = 'TESTNET';
+// Public catalog facts for the labelled live-store showcase card. Facts as
+// served on the public product page on 2026-10-25; text and link only, no
+// store imagery (copyright stays with the store).
+const LIVE_SHOWCASE = Object.freeze({
+  url: 'https://enza.in/products/organic-plain-khapli-wheat-khakhra',
+  title: 'Khapli Wheat Khakhra Organic Plain',
+  brand: 'Satjeevan Organics',
+  listPrice: '₹190 (public list price)',
+  note: 'public catalog facts as served by enza.in on 2026-10-25'
+});
 let order;
 let config;
 let wallet;
@@ -172,18 +183,18 @@ function showReview(order, item) {
 
 function itemCard(item) {
   const card = document.createElement('article');
-  card.className = `sample-card ${item.kind === 'event' ? 'event' : 'product'}`;
-  card.id = item.kind === 'event' ? 'event' : 'product';
+  card.className = `sample-card ${item.kind === 'event' ? 'event' : item.kind === 'showcase' ? 'showcase' : 'product'}`;
+  card.id = item.kind === 'event' ? 'event' : item.kind === 'showcase' ? 'showcase' : 'product';
   const art = document.createElement('div');
   art.className = 'sample-art';
   const artText = document.createElement('span');
-  artText.textContent = item.kind === 'event' ? 'Feel the moment.' : 'Live thoughtfully.';
+  artText.textContent = item.kind === 'event' ? 'Feel the moment.' : item.kind === 'showcase' ? 'From the live store.' : 'Live thoughtfully.';
   art.append(artText);
   const body = document.createElement('div');
   body.className = 'sample-card-body';
   const kind = document.createElement('div');
   kind.className = 'sample-kind';
-  kind.textContent = item.kind === 'event' ? 'ANTIDOTE · SAMPLE EXPERIENCE' : 'SHOP ENZA · SAMPLE PRODUCT';
+  kind.textContent = item.kind === 'event' ? 'ANTIDOTE · SAMPLE EXPERIENCE' : item.kind === 'showcase' ? 'SHOP ENZA · LIVE SHOWCASE' : 'SHOP ENZA · SAMPLE PRODUCT';
   const heading = document.createElement('h3');
   heading.textContent = item.name;
   const description = document.createElement('p');
@@ -191,7 +202,17 @@ function itemCard(item) {
     ? staticPreview
       ? 'A fictional ENZA-hosted sound-healing session. This hosted preview creates a sample ticket without a blockchain payment.'
       : 'A fictional ENZA-hosted sound-healing session. A demo ticket appears only after verified Testnet settlement on the Soroban checkout contract.'
-    : 'A sample reusable bottle for testing checkout. This is not live EnZa stock or a shippable order.';
+    : item.kind === 'showcase'
+      ? 'A real product publicly listed on the live enza.in storefront. This checkout is still a Testnet demo: it does not reserve live inventory, does not create a live-store order, and the demo amount is not a currency conversion of the live price.'
+      : 'A sample reusable bottle for testing checkout. This is not live EnZa stock or a shippable order.';
+  if (item.kind === 'showcase' && LIVE_SHOWCASE) {
+    const link = document.createElement('a');
+    link.href = LIVE_SHOWCASE.url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = `${LIVE_SHOWCASE.title} — ${LIVE_SHOWCASE.brand}, live price ${LIVE_SHOWCASE.listPrice} (opens enza.in)`;
+    description.append(document.createElement('br'), link, document.createElement('br'), ` (${LIVE_SHOWCASE.note})`);
+  }
   const bottom = document.createElement('div');
   bottom.className = 'sample-card-bottom';
   const price = document.createElement('div');

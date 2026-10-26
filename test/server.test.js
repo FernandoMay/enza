@@ -52,7 +52,7 @@ test('public demo config exposes exact Testnet payment details and checkout conf
     assert.equal(config.operatorConfigured, true);
     assert.equal(config.checkout.contractId, CONTRACT);
     assert.deepEqual(config.checkout.networkPassphrase, 'Test SDF Network ; September 2015');
-    assert.deepEqual(config.items.map(item => item.id), ['bottle', 'antidote']);
+    assert.deepEqual(config.items.map(item => item.id), ['bottle', 'antidote', 'khakhra']);
     // No secret material may ever appear in the public config.
     assert.ok(!res.payload.toLowerCase().includes('secret'));
   });
