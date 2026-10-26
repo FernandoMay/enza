@@ -102,6 +102,33 @@ proven by its signature and the exact `pay_order(order_id, payer)` invocation
 binding inside `validateSignedCheckoutTx` — a browser-supplied payer claim is
 never trusted; if present, a mismatched claim rejects with a clear error.
 
+## Verifying the operator configuration (what to do before testing)
+
+Because the checkout contract enforces admin authorization for `create_order`,
+the deployed functions must see `STELLAR_CHECKOUT_OPERATOR_SECRET` configured
+as a Functions-scoped environment variable **and ship on a build created after
+it was saved**. If `GET /api/config` still reports `operatorConfigured: false`
+after the owner saved the variable:
+
+1. Check the exact name (no typos) and the scopes: **environment variables for
+   Functions**, site-wide scope (not only "deploy previews" or a branch
+   context). The probe answers with `operatorEnvKeys` — the first (up to 5)
+   `STELLAR_*OPERATOR*` variable NAMES the runtime can see, so a typo is
+   visible without reading any value.
+2. `bootstrapError` in the same answer reports a sanitized bootstrap reason
+   when the deployment's configuration itself failed to load.
+3. Trigger a redeploy after any variable change; the functions' environment is
+   baked in at deploy time.
+4. `GET /api/health` performs a bounded RPC reachability probe and returns the
+   concrete failure class (DNS `ENOTFOUND`, connect `ECONNREFUSED`, timeout
+   `UND_ERR_CONNECT_TIMEOUT`, proxy/egress blocks...) instead of an opaque
+   "fetch failed" — use it to distinguish RPC downtime from function egress
+   problems. No secrets or headers are ever included.
+
+The frontend treats a deployed serverless backend that cannot process payments
+as a BLOCKED state (payments disabled, exact reason shown): it never falls
+back to presenting the static simulation as a checkout.
+
 ## Preview and production boundaries
 
 - The site's PR previews build `dist` plus the functions; the Soroban flow runs

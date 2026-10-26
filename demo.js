@@ -9,6 +9,11 @@ const $ = id => document.getElementById(id);
 // configured + operatorConfigured and switches out of preview mode; a static
 // host (GitHub Pages / Netlify without functions) falls back to the preview.
 let staticPreview = location.hostname.endsWith('.github.io') || location.hostname.endsWith('.netlify.app');
+// When a deployed serverless backend exists but cannot process payments
+// (missing operator secret, RPC unreachable, bootstrap error), this holds the
+// actionable reason and payments are BLOCKED — the static simulation is never
+// silently presented again as a checkout fallback.
+let hostedBlocked = null;
 const previewConfig = {
   issuer: 'No asset used in this preview',
   merchant: 'No destination in this preview',
@@ -247,6 +252,7 @@ function itemCard(item) {
         order = { id, itemId: item.id, kind: item.kind, amount: item.amount,
           memo: `preview-${id.slice(0,8)}`, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
       } else {
+        if (hostedBlocked) throw new Error(hostedBlocked);
         if (freighter) lastRail = 'wallet';
         else if (config.capabilities?.demoWallet === false) {
           throw new Error('This hosted deployment requires your own wallet: install the Stellar Testnet Freighter extension, connect it, and choose a sample again.');
@@ -325,16 +331,30 @@ async function payWithDemoWallet() {
 }
 
 try {
-  // Probe the API once: when it answers fully configured, this host runs the
-  // real checkout (localhost server or hosted serverless functions). A static
-  // host keeps the labelled paymentless preview. Configuration is never
-  // faked: a half-configured hosted deployment stays in preview mode (fail
-  // closed) instead of pretending to settle payments.
+  // Probe the API once. Modes:
+  //  1. `static` — no /api at all (pure static host): labelled paymentless
+  //     preview;
+  //  2. `blocked` — a serverless backend IS deployed but cannot process
+  //     payments (operator secret invisible, RPC unreachable, bootstrap
+  //     error): actionable error, payments disabled;
+  //  3. `live` — real Testnet checkout (localhost server or hosted
+  //     serverless functions), Freighter enabled.
+  // Configuration is never faked: configuration problems do NOT fall back to
+  // the simulation — the blocked mode keeps the failure visible.
   let hostedConfig = null;
   try { hostedConfig = await api('/config'); } catch (probeError) {
     if (!staticPreview) throw probeError;
   }
-  if (hostedConfig?.configured && hostedConfig?.operatorConfigured && hostedConfig?.checkout) {
+  const serverlessPresent = Boolean(hostedConfig && hostedConfig.hostedMode === 'serverless-stateless');
+  if (serverlessPresent) {
+    config = hostedConfig;
+    staticPreview = false;
+    if (!(hostedConfig.configured && hostedConfig.operatorConfigured && hostedConfig.checkout)) {
+      hostedBlocked = hostedConfig.bootstrapError
+        ? `Hosted checkout is blocked by a deployment configuration problem — ${hostedConfig.bootstrapError}`
+        : 'Hosted checkout is blocked: STELLAR_CHECKOUT_OPERATOR_SECRET is not visible to the deployed functions. The site owner must add it as a server-side Netlify Functions environment variable and trigger a redeploy.';
+    }
+  } else if (hostedConfig?.configured && hostedConfig?.operatorConfigured && hostedConfig?.checkout) {
     config = hostedConfig;
     staticPreview = false;
   } else {
@@ -352,7 +372,7 @@ try {
       ? 'Hosted preview: the deployment is reachable, but Testnet checkout variables are not configured yet, so payments are disabled. The site operator must complete docs/NETLIFY_PREVIEW.md setup.'
       : 'Hosted static preview: choose a sample to explore checkout. No Testnet payment or on-chain order confirmation occurs here.');
   } else {
-    $('freighter-connect').hidden = false;
+    $('freighter-panel').hidden = Boolean(hostedBlocked);
     try {
       const checkout = await api('/checkout');
       $('freighter-status').hidden = false;
@@ -430,6 +450,7 @@ async function resumeLastOrder() {
 
 $('pay').onclick = async () => {
   if (processing) return;
+  if (hostedBlocked) return status(hostedBlocked);
   if (staticPreview) {
     if (!order) return status('Select a sample first.');
     const ticket = order.kind === 'event' ? ` · preview ticket PREVIEW-${order.id.slice(0,8)}` : '';

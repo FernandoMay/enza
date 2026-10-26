@@ -531,3 +531,83 @@ test('host glue: creating an order without an operator key fails explicitly befo
   assert.equal(result.status, 400);
   assert.match(result.payload.error, /STELLAR_CHECKOUT_OPERATOR_SECRET/);
 });
+
+// ---- hosted diagnostics: honest bootstrap errors, names-only operator env
+// keys, and a real bounded RPC reachability probe on /api/health ----
+import { describeNetworkedError } from '../netlify/functions/lib/host.mjs';
+
+test('host config: a bad contract-id override fails closed with a sanitized actionable bootstrapError', async () => {
+  resetRuntime();
+  const result = await handleApiRequest({
+    url: 'https://enza.test/api/config', method: 'GET',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    env: { STELLAR_CHECKOUT_CONTRACT_ID: 'invalid-override' }, runtime: null
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.payload.configured, false);
+  assert.match(result.payload.bootstrapError, /STELLAR_CHECKOUT_CONTRACT_ID/);
+  assert.equal(result.payload.hostedMode, 'serverless-stateless');
+});
+
+test('host config: operator env variable NAMES are reported (values never) so typos are spottable', async () => {
+  resetRuntime();
+  const result = await handleApiRequest({
+    url: 'https://enza.test/api/config', method: 'GET',
+    headers: { origin: 'https://enza.test', host: 'enza.test' },
+    env: { STELLAR_CHECKOUT_OPERATOR_SECERT: 'SAAAA', COMMIT_REF: 'deadbeef' }, // typo on purpose
+    runtime: fakeChainRuntime({ noOperator: true })
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.payload.operatorEnvKeys, ['STELLAR_CHECKOUT_OPERATOR_SECERT']);
+  assert.equal(result.payload.operatorConfigured, false);
+  const serialized = JSON.stringify(result.payload);
+  assert.ok(!serialized.includes('SAAAA'), 'no variable value may leak into the probe');
+});
+
+test('host health: bounded RPC probe classifies the real network failure without log access', async () => {
+  resetRuntime();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } });
+  };
+  try {
+    const result = await handleApiRequest({
+      url: 'https://enza.test/api/health', method: 'GET',
+      headers: { origin: 'https://enza.test', host: 'enza.test' },
+      env: {}, runtime: fakeChainRuntime()
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.payload.rpc.reachable, false);
+    assert.match(result.payload.rpc.error, /ENOTFOUND/);
+    assert.match(result.payload.rpc.error, /outbound network failure/);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('host health: reachable RPC answers honestly and operator state is included', async () => {
+  resetRuntime();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true });
+  try {
+    const result = await handleApiRequest({
+      url: 'https://enza.test/api/health', method: 'GET',
+      headers: { origin: 'https://enza.test', host: 'enza.test' },
+      env: {}, runtime: fakeChainRuntime()
+    });
+    assert.equal(result.payload.rpc.reachable, true);
+    const blocked = await handleApiRequest({
+      url: 'https://enza.test/api/health', method: 'GET',
+      headers: { origin: 'https://enza.test', host: 'enza.test' },
+      env: {}, runtime: fakeChainRuntime({ noOperator: true })
+    });
+    assert.equal(blocked.payload.operatorConfigured, false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('network diagnostics never echo key-shaped material from error messages', () => {
+  const secret = 'S' + 'A'.repeat(55);
+  const described = describeNetworkedError(new Error(`bad key ${secret} pair`));
+  assert.ok(!described.includes(secret));
+  assert.match(described, /\[redacted\]/);
+  const chained = Object.assign(new Error('fetch failed'), { cause: { code: 'UND_ERR_CONNECT_TIMEOUT', cause: { code: 'ECONNRESET' } } });
+  assert.match(describeNetworkedError(chained), /UND_ERR_CONNECT_TIMEOUT > ECONNRESET/);
+});
